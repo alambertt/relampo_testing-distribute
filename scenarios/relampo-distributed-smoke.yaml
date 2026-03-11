@@ -1,0 +1,15 @@
+test:
+  name: "Distributed Smoke Test"
+  description: "Live smoke test for github/distributed command"
+
+http_defaults:
+  base_url: "https://httpbin.org"
+
+scenarios:
+  - name: "Smoke"
+    load:
+      type: constant
+      users: 2
+      duration: 20s
+    steps:
+      - get: /get?source=relampo_distributed_smoke
