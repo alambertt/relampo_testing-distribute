@@ -1,0 +1,203 @@
+{
+  "schema": 1,
+  "execution": {
+    "worker_proof": {
+      "binary_sha256": "943d8506d7c9fc4f0d3c0e97a9b4e53af86affdd1fbe525c4f94dd98bd7b8a14",
+      "receipt": {
+        "schema_version": 1,
+        "os": "linux",
+        "arch": "amd64",
+        "binary_sha256": "943d8506d7c9fc4f0d3c0e97a9b4e53af86affdd1fbe525c4f94dd98bd7b8a14",
+        "capabilities": {
+          "schema_version": 1,
+          "version": "RLP-562-86e43000",
+          "multi_scenario_parallel": true,
+          "multi_scenario_phase": true,
+          "multi_scenario_authorization": true,
+          "multi_scenario_resolved_load_contract": true,
+          "execution_manifest_version": 1
+        }
+      }
+    },
+    "execution_started_at": "2026-10-06T05:43:08Z",
+    "execution_ended_at": "2026-10-06T05:43:33Z",
+    "expected_execution": {
+      "execution_id": "relampo-5nvg4ryhaoyppqproqgxgapawy",
+      "script_sha256": "c13952612cbc55aa4926b0ed2b1e9cd294c6b4a0a25b2fa8dadc330393f0cbbe",
+      "provider": "github",
+      "provider_run_id": "37419926977",
+      "provider_manifest_digest": "7c9f9f392fa5c596f52987264d866c753218576febdd04e7feb60239e788dd1c",
+      "scenario_mode": "parallel",
+      "total_nodes": 2,
+      "scenarios": [
+        {
+          "scenario_name": "A",
+          "load_contract": {
+            "scenario_name": "A",
+            "load": {
+              "duration": "3s",
+              "iterations": 1,
+              "users": 3
+            },
+            "peak_vus": 3,
+            "duration": 3000000000
+          }
+        },
+        {
+          "scenario_name": "B",
+          "load_contract": {
+            "scenario_name": "B",
+            "load": {
+              "duration": "3s",
+              "iterations": 1,
+              "users": 2
+            },
+            "peak_vus": 2,
+            "duration": 3000000000
+          }
+        }
+      ],
+      "jobs": [
+        {
+          "node_id": 1,
+          "provider_attempt": "1",
+          "provider_job_id": "run-nodes-node-1"
+        },
+        {
+          "node_id": 2,
+          "provider_attempt": "1",
+          "provider_job_id": "run-nodes-node-2"
+        }
+      ]
+    },
+    "repository": "alambertt/relampo_testing-distribute",
+    "run_id": 37419926977,
+    "attempt": 1,
+    "nodes": 2,
+    "vus": 5,
+    "scenario": "scenarios/parallel.yaml",
+    "scenario_sha256": "c13952612cbc55aa4926b0ed2b1e9cd294c6b4a0a25b2fa8dadc330393f0cbbe",
+    "source_sha": "a10fc2e978922225f21f4cfedf7ffa5c0328ca0e",
+    "version": "dev",
+    "language": "en",
+    "timezone": "America/New_York",
+    "duration": "",
+    "formats": {
+      "html": "rlp777.html",
+      "json": "rlp777.json"
+    },
+    "license": {
+      "license_authorized_duration": "1h0m0s",
+      "license_authorized_nodes": "4",
+      "license_authorized_vus": "500",
+      "license_tier": "free"
+    }
+  },
+  "generation": "completed",
+  "publication": "completed",
+  "outcome": {
+    "status": "completed",
+    "partial": false,
+    "requests": 5,
+    "failures": 0,
+    "received_nodes": [
+      "node-1",
+      "node-2"
+    ],
+    "missing_nodes": null,
+    "expected_execution": {
+      "execution_id": "relampo-5nvg4ryhaoyppqproqgxgapawy",
+      "script_sha256": "c13952612cbc55aa4926b0ed2b1e9cd294c6b4a0a25b2fa8dadc330393f0cbbe",
+      "provider": "github",
+      "provider_run_id": "37419926977",
+      "provider_manifest_digest": "7c9f9f392fa5c596f52987264d866c753218576febdd04e7feb60239e788dd1c",
+      "scenario_mode": "parallel",
+      "total_nodes": 2,
+      "scenarios": [
+        {
+          "scenario_name": "A",
+          "load_contract": {
+            "scenario_name": "A",
+            "load": {
+              "duration": "3s",
+              "iterations": 1,
+              "users": 3
+            },
+            "peak_vus": 3,
+            "duration": 3000000000
+          }
+        },
+        {
+          "scenario_name": "B",
+          "load_contract": {
+            "scenario_name": "B",
+            "load": {
+              "duration": "3s",
+              "iterations": 1,
+              "users": 2
+            },
+            "peak_vus": 2,
+            "duration": 3000000000
+          }
+        }
+      ],
+      "jobs": [
+        {
+          "node_id": 1,
+          "provider_attempt": "1",
+          "provider_job_id": "run-nodes-node-1"
+        },
+        {
+          "node_id": 2,
+          "provider_attempt": "1",
+          "provider_job_id": "run-nodes-node-2"
+        }
+      ]
+    },
+    "complete": true,
+    "scenarios": [
+      {
+        "name": "A",
+        "outcome": "completed",
+        "complete": true
+      },
+      {
+        "name": "B",
+        "outcome": "completed",
+        "complete": true
+      }
+    ]
+  },
+  "reports": [
+    {
+      "name": "rlp777.json",
+      "bytes": 30830,
+      "sha256": "c1a0457aa52db7d445da8953742730f39d248bcb0e941ca34809f35b961fa766",
+      "compression": "gzip",
+      "assets": [
+        {
+          "name": "rlp777.json.gz",
+          "bytes": 5642,
+          "sha256": "d330172a7592d23e3bed464dc7c52e5273c63b75bfd64db7c3cdaefc231d3b0d",
+          "url": "https://github.com/alambertt/relampo_testing-distribute/releases/download/relampo-report-37419926977-1/rlp777.json.gz"
+        }
+      ]
+    },
+    {
+      "name": "rlp777.html",
+      "bytes": 86497,
+      "sha256": "82f660bf3919b408be8eb85779deda891ee90682cd83ad1c278e5fa779bffa12",
+      "compression": "gzip",
+      "assets": [
+        {
+          "name": "rlp777.html.gz",
+          "bytes": 23616,
+          "sha256": "a52fcb94cb97e786ec1dbccfa24c1aad5dc7abe6df65292e36001390d8de46e2",
+          "url": "https://github.com/alambertt/relampo_testing-distribute/releases/download/relampo-report-37419926977-1/rlp777.html.gz"
+        }
+      ]
+    }
+  ],
+  "release": "https://github.com/alambertt/relampo_testing-distribute/releases/tag/relampo-report-37419926977-1",
+  "index": "https://github.com/alambertt/relampo_testing-distribute/tree/main/reports/2026-10-06/37419926977-1"
+}
