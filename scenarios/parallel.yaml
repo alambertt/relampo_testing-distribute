@@ -11,7 +11,7 @@ scenarios:
       load: {users: 3, duration: 3s, iterations: 1}
       data_source:
         type: csv
-        file: data/a11c4d1812ab449b4a5b2225abfd79bf594b499ec3009e45206fe80aeed32256.csv
+        file: data/eb235e33ffb67ced862ace154f4452f88570eb707c09178469cb5094036903b6.csv
         mode: per_vu
         variable_names: [value]
       steps:
@@ -20,7 +20,7 @@ scenarios:
       load: {users: 2, duration: 3s, iterations: 1}
       data_source:
         type: csv
-        file: data/0b739e7e89b5c98c63a34b3b1be04e03be10a7803e7f8371ce6b04932d958cdd.csv
+        file: data/a98114b22fba2957e3f9c8d69e6a10496ab30975568556f54a8e8ce2ffdafd36.csv
         mode: per_vu
         variable_names: [value]
       steps:

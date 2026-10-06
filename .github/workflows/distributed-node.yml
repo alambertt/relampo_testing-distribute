@@ -90,14 +90,6 @@ jobs:
         steps:
             - name: Checkout repo
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - name: Start task-owned loopback target
-              run: |
-                if [ "${{ matrix.node }}" = 2 ]; then sleep 2; fi
-                mkdir -p results
-                python3 .relampo/smoke-target.py > results/target-server.log 2>&1 &
-                echo "$!" > results/target.pid
-                sleep 0.2
-                kill -0 "$(cat results/target.pid)"
             - name: Install relampo-worker
               run: |
                 test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
@@ -135,13 +127,13 @@ jobs:
                 RELAMPO_WORKER_LOG_MODE: table
                 RELAMPO_WORKER_SNAPSHOT_SECONDS: '0'
                 RELAMPO_WORKER_PROGRESS_SECONDS: '5'
+                RELAMPO_PROVIDER_PROJECT: ${{ github.repository }}
+                RELAMPO_PROVIDER_RUN_ID: ${{ github.run_id }}
+                RELAMPO_PROVIDER_ATTEMPT: ${{ github.run_attempt }}
                 RELAMPO_PROVIDER_JOB_ID: ${{ github.job }}-node-${{ matrix.node }}
                 RELAMPO_EXECUTION_ID: ${{ needs.prepare-context.outputs.execution_id }}
                 RELAMPO_PROVIDER_MANIFEST_DIGEST: ${{ needs.prepare-context.outputs.manifest_digest }}
                 RELAMPO_PROVIDER: github
-                RELAMPO_PROVIDER_PROJECT: ${{ github.repository }}
-                RELAMPO_PROVIDER_RUN_ID: ${{ github.run_id }}
-                RELAMPO_PROVIDER_ATTEMPT: ${{ github.run_attempt }}
               run: |
                 test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
                 echo "Starting node $RELAMPO_NODE of 2"
