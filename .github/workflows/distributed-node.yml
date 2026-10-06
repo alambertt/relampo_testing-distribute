@@ -91,6 +91,17 @@ jobs:
         steps:
             - name: Checkout repo
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - name: Start task-owned loopback target
+              env:
+                RELAMPO_SMOKE_PHASE: A
+                RELAMPO_SMOKE_NODE: ${{ matrix.node }}
+              run: |
+                if [ "$RELAMPO_SMOKE_PHASE" = A ] && [ "$RELAMPO_SMOKE_NODE" = 2 ]; then sleep 2; fi
+                mkdir -p results
+                python3 .relampo/smoke-target.py > results/target-server.log 2>&1 &
+                echo "$!" > results/target.pid
+                sleep 0.2
+                kill -0 "$(cat results/target.pid)"
             - name: Install relampo-worker
               run: |
                 test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
@@ -197,6 +208,17 @@ jobs:
         steps:
             - name: Checkout repo
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - name: Start task-owned loopback target
+              env:
+                RELAMPO_SMOKE_PHASE: B
+                RELAMPO_SMOKE_NODE: ${{ matrix.node }}
+              run: |
+                if [ "$RELAMPO_SMOKE_PHASE" = A ] && [ "$RELAMPO_SMOKE_NODE" = 2 ]; then sleep 2; fi
+                mkdir -p results
+                python3 .relampo/smoke-target.py > results/target-server.log 2>&1 &
+                echo "$!" > results/target.pid
+                sleep 0.2
+                kill -0 "$(cat results/target.pid)"
             - name: Install relampo-worker
               run: |
                 test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
