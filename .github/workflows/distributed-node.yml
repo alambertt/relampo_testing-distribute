@@ -1,450 +1,183 @@
-name: 🌩️ Distributed Relampo Test
-
+name: "\U0001F329️ Distributed Relampo Test"
 on:
-  workflow_dispatch:
-
+    workflow_dispatch:
+permissions:
+    contents: read
 jobs:
-  run-nodes:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [1, 2]
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Setup latest Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-          check-latest: true
-
-      - name: Install Relampo CLI
-        run: |
-          curl -fsSL https://dl.relampo.com/install.sh | bash
-
-      - name: Install relampo-worker
-        run: |
-          RELAMPO_VERSION="$(curl -fsSL https://dl.relampo.com/relampo/latest.txt | tr -d '[:space:]')"
-          WORKER_URL="https://dl.relampo.com/relampo/v${RELAMPO_VERSION}/relampo-worker_${RELAMPO_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL "$WORKER_URL" -o /tmp/relampo-worker.tar.gz
-          tar -xzf /tmp/relampo-worker.tar.gz -C /tmp
-          mkdir -p "$HOME/.local/bin"
-          install -m 0755 /tmp/relampo-worker "$HOME/.local/bin/relampo-worker"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - name: Run worker node
-        run: |
-          echo "🏁 Starting node ${{ matrix.node }} of 2"
-          SCENARIO_PATH='scenarios/relampo-distributed-smoke.yaml'
-          SCENARIO_DIR="$(dirname "$SCENARIO_PATH")"
-          SCENARIO_FILE="$(basename "$SCENARIO_PATH")"
-          VUS_FLAG=""
-          if [ -n "2" ]; then
-            VUS_FLAG="--vus 2"
-          fi
-          set -o pipefail
-          WORKER_STATUS=0
-          (
-            cd "$SCENARIO_DIR"
-            OUTPUT_FILE="$(mktemp)"
-            echo $'\033[38;5;214m⠸ Esto no es magia, relampo solo esta trabajando, pronto te mostrare los resultados.\033[0m'
-            RELAMPO_P95_ALERT=0
-            relampo_extract_stats() {
-              local file="$1"
-              local start_line="$2"
-              awk -v from="$start_line" '
-                BEGIN {
-                  count = 0
-                  errs = 0
-                  sum = 0
-                  minv = -1
-                  maxv = 0
-                  p95 = 0
-                  active_last = 0
-                  active_max = 0
+    prepare-context:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        env:
+            GH_TOKEN: ${{ github.token }}
+        outputs:
+            version: ${{ steps.context.outputs.version }}
+            execution_id: ${{ steps.context.outputs.execution_id }}
+            manifest_digest: ${{ steps.context.outputs.manifest_digest }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - name: Verify cloud publication access before load
+              run: |
+                BRANCH=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch')
+                if [ "$(gh api "repos/$GITHUB_REPOSITORY/branches/$BRANCH" --jq '.protected')" != false ]; then
+                  echo '::error::Cloud report indexes require direct writes to the default branch. Branch protection blocks this publication mode.'
+                  exit 1
+                fi
+                HEAD_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq '.object.sha')
+                TAG="relampo-report-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+                TAG_CREATED=false
+                RELEASE_ID=''
+                cleanup() {
+                  if [ -n "$RELEASE_ID" ]; then gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"; fi
+                  if [ "$TAG_CREATED" = true ]; then gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"; fi
                 }
-                NR < from { next }
-                {
-                  if ($0 !~ /"method":"[A-Z]+"/) next
-                  if ($0 ~ /"method":"INFO"/ || $0 ~ /"method":"SYSTEM"/) next
-                  lat = 0
-                  st = 0
-                  if (match($0, /"latency_ms":[0-9.]+/)) {
-                    lat_s = substr($0, RSTART + 13, RLENGTH - 13)
-                    lat = lat_s + 0
-                  }
-                  if (match($0, /"status":[0-9]+/)) {
-                    st_s = substr($0, RSTART + 9, RLENGTH - 9)
-                    st = st_s + 0
-                  }
-                  count++
-                  lats[count] = lat
-                  sum += lat
-                  if (minv < 0 || lat < minv) minv = lat
-                  if (lat > maxv) maxv = lat
-                  if (st >= 400) errs++
-                  if (match($0, /"concurrency":[0-9]+/)) {
-                    conc_s = substr($0, RSTART + 14, RLENGTH - 14)
-                    conc = conc_s + 0
-                    active_last = conc
-                    if (conc > active_max) active_max = conc
-                  }
-                }
-                END {
-                  if (count > 0) {
-                    for (i = 2; i <= count; i++) {
-                      key = lats[i]
-                      j = i - 1
-                      while (j >= 1 && lats[j] > key) {
-                        lats[j + 1] = lats[j]
-                        j--
-                      }
-                      lats[j + 1] = key
-                    }
-                    pidx = int((count * 95 + 99) / 100)
-                    if (pidx < 1) pidx = 1
-                    if (pidx > count) pidx = count
-                    p95 = lats[pidx]
-                  }
-                  if (minv < 0) minv = 0
-                  printf("%d|%.3f|%.3f|%.3f|%d|%.3f|%d|%d\n", count, sum, minv, maxv, errs, p95, active_last, active_max)
-                }
-              ' "$file"
-            }
-            relampo_fmt_hms() {
-              local s="$1"
-              if [ "$s" -lt 0 ]; then
-                s=0
-              fi
-              printf '%02d:%02d:%02d' $((s / 3600)) $(((s % 3600) / 60)) $((s % 60))
-            }
-            relampo_print_summary() {
-              local prefix="$1"
-              local count="$2"
-              local elapsed="$3"
-              local sum="$4"
-              local minv="$5"
-              local maxv="$6"
-              local errs="$7"
-              local p95="$8"
-              local active_last="$9"
-              local active_max="${10}"
-              if [ "$count" -le 0 ]; then
-                return
-              fi
-              if [ "$elapsed" -le 0 ]; then
-                elapsed=1
-              fi
-              local rate avg errpct
-              rate="$(awk -v c="$count" -v e="$elapsed" 'BEGIN { printf "%.1f", (e > 0 ? c / e : 0) }')"
-              avg="$(awk -v s="$sum" -v c="$count" 'BEGIN { printf "%.1f", (c > 0 ? s / c : 0) }')"
-              errpct="$(awk -v e="$errs" -v c="$count" 'BEGIN { printf "%.2f", (c > 0 ? (e * 100.0) / c : 0) }')"
-              local p95_alarm=""
-              if awk -v v="$p95" 'BEGIN { exit !(v > 8000.0) }'; then
-                p95_alarm=" ⚠"
-                RELAMPO_P95_ALERT=1
-              fi
-              printf 'summary %s %7d in %s = %6s/s Avg: %7s Min: %7.1f Max: %7.1f P95: %7.1f%s Active: %3d/%-3d Err: %5d (%6s%%)\n' \
-                "$prefix" "$count" "$(relampo_fmt_hms "$elapsed")" "$rate" "$avg" "$minv" "$maxv" "$p95" "$p95_alarm" "$active_last" "$active_max" "$errs" "$errpct"
-            }
-            relampo_print_github_diagnosis() {
-              local total_count="$1"
-              local total_err="$2"
-              local total_p95="$3"
-              local mem_peak_mb="$4"
-              local mem_peak_pct="$5"
-              local cpu_peak="$6"
-              local go_delta="$7"
-              local iowait_peak="$8"
-              local iowait_samples="$9"
-              if [ "$total_count" -le 0 ]; then
-                return
-              fi
-              local errpct iowait_pct
-              errpct="$(awk -v e="$total_err" -v c="$total_count" 'BEGIN { printf "%.2f", (c > 0 ? (e * 100.0) / c : 0) }')"
-              iowait_pct="$(awk -v io="$iowait_peak" -v go="$RELAMPO_GO_SAMPLE_PEAK" 'BEGIN { if (go > 0) printf "%.1f", (io * 100.0) / go; else printf "0.0" }')"
-
-              echo ""
-              echo "Análisis automático de saturación"
-              echo "Señales: ERR ${errpct}% | P95 ${total_p95} ms | MEM pico ${mem_peak_mb} MB (${mem_peak_pct}%) | CPU pico ${cpu_peak}% | Go Δ ${go_delta} | IO wait pico ${iowait_peak} | IO wait ${iowait_pct}% | muestras ${iowait_samples}"
-
-              if awk -v e="$errpct" -v p="$total_p95" 'BEGIN { exit !(e >= 20.0 && p >= 8000.0) }'; then
-                echo "Nivel: CRÍTICO"
-                if [ "$iowait_samples" -eq 0 ]; then
-                  echo "Lectura: degradación severa, pero IO wait quedó inconcluso (sin muestras válidas de pprof)."
-                  echo "Acción: repetir la prueba y revisar 5xx, timeouts y colas del sistema objetivo."
-                elif awk -v pct="$iowait_pct" 'BEGIN { exit !(pct >= 20.0) }'; then
-                  echo "Lectura: probable cuello de botella externo (red/DB/servicio dependiente), con goroutines en espera de I/O."
-                  echo "Acción: revisar latencia de dependencias, pool de conexiones y timeouts aguas abajo."
-                elif awk -v mem="$mem_peak_pct" 'BEGIN { exit !(mem >= 85.0) }'; then
-                  echo "Lectura: posible saturación de memoria del nodo generador."
-                  echo "Acción: bajar VUs por nodo o distribuir en más nodos."
-                elif awk -v cpu="$cpu_peak" 'BEGIN { exit !(cpu >= 85.0) }'; then
-                  echo "Lectura: posible saturación del nodo generador (CPU alta)."
-                  echo "Acción: bajar VUs por nodo o distribuir en más nodos."
-                elif [ "$go_delta" -ge 1000 ]; then
-                  echo "Lectura: acumulación alta de goroutines; patrón compatible con backpressure."
-                  echo "Acción: reducir rampa inicial y validar capacidad real del backend antes de subir carga."
+                trap cleanup EXIT
+                # Tag creation verifies contents:write without racing default-branch updates.
+                gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$HEAD_SHA" >/dev/null
+                TAG_CREATED=true
+                gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"
+                TAG_CREATED=false
+                RELEASE_ID=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f target_commitish="$BRANCH" -f name="Relampo publication preflight $GITHUB_RUN_ID" -F draft=true -F prerelease=true -f make_latest=false --jq '.id')
+                gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
+                RELEASE_ID=''
+            - name: Capture immutable execution context
+              id: context
+              env:
+                RELAMPO_REPOSITORY: ${{ github.repository }}
+                RELAMPO_RUN_ID: ${{ github.run_id }}
+                RELAMPO_RUN_ATTEMPT: ${{ github.run_attempt }}
+                RELAMPO_SOURCE_SHA: ${{ github.sha }}
+              run: |
+                test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
+                python3 - <<'PY_CONTEXT'
+                import hashlib, json, os, pathlib, re, urllib.request
+                path = pathlib.Path('.relampo/report-context.json')
+                context = json.loads(path.read_text())
+                version = context['version']
+                if version == 'dev' and not pathlib.Path('.relampo/bin/relampo').is_file():
+                    version = urllib.request.urlopen('https://dl.relampo.com/relampo/latest.txt').read().decode().strip()
+                if version != 'dev' and not re.fullmatch(r'v?\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?', version):
+                    raise ValueError('invalid generator version')
+                context.update(repository=os.environ['RELAMPO_REPOSITORY'], run_id=int(os.environ['RELAMPO_RUN_ID']), attempt=int(os.environ['RELAMPO_RUN_ATTEMPT']), source_sha=os.environ['RELAMPO_SOURCE_SHA'], version=version)
+                if hashlib.sha256(pathlib.Path(context['scenario']).read_bytes()).hexdigest() != context['scenario_sha256']:
+                    raise ValueError('scenario digest mismatch')
+                expected = context['expected_execution']
+                expected['provider_run_id'] = os.environ['RELAMPO_RUN_ID']
+                expected.pop('provider_manifest_digest', None)
+                digest = hashlib.sha256(json.dumps(expected, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+                expected['provider_manifest_digest'] = digest
+                path.write_text(json.dumps(context))
+                with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                    output.write('execution_id=' + expected['execution_id'] + '\n')
+                    output.write('manifest_digest=' + digest + '\n')
+                with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                    output.write('version=' + version.removeprefix('v') + '\n')
+                PY_CONTEXT
+            - name: Upload execution context
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                name: relampo-context-attempt-${{ github.run_attempt }}
+                path: .relampo/report-context.json
+                include-hidden-files: true
+                retention-days: ${{ vars.RELAMPO_EVIDENCE_RETENTION_DAYS || 7 }}
+    run-nodes:
+        needs: prepare-context
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                node: [1, 2]
+        steps:
+            - name: Checkout repo
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - name: Install relampo-worker
+              run: |
+                test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
+                SCENARIO_PATH='scenarios/parallel.yaml'
+                mkdir -p "$HOME/.local/bin"
+                WORKER_OVERRIDE="$(dirname "$SCENARIO_PATH")/relampo-worker"
+                if [ -f "$WORKER_OVERRIDE" ]; then
+                  (cd "$(dirname "$WORKER_OVERRIDE")" && sha256sum -c relampo-worker.sha256)
+                  install -m 0755 "$WORKER_OVERRIDE" "$HOME/.local/bin/relampo-worker"
                 else
-                  echo "Lectura: hay degradación fuerte sin firma única de CPU/I/O."
-                  echo "Acción: priorizar endpoints con más errores y correlacionar con logs del servidor."
+                  echo '::error::Selected worker override is missing'; exit 1
                 fi
-              elif awk -v e="$errpct" 'BEGIN { exit !(e > 0.0) }'; then
-                echo "Nivel: ALERTA"
-                echo "Lectura: hay errores no esperados bajo carga."
-                echo "Acción: revisar fallos por endpoint y repetir con la misma carga para confirmar patrón."
-              elif awk -v p="$total_p95" 'BEGIN { exit !(p >= 8000.0) }'; then
-                echo "Nivel: ALERTA"
-                echo "Lectura: latencia P95 en zona de percepción negativa para usuarios."
-                echo "Acción: optimizar endpoints más lentos o reducir concurrencia."
-              elif awk -v mem="$mem_peak_pct" 'BEGIN { exit !(mem >= 85.0) }'; then
-                echo "Nivel: ALERTA"
-                echo "Lectura: memoria del nodo generador en zona alta."
-                echo "Acción: reducir carga por nodo o ampliar distribución."
-              else
-                echo "Nivel: ESTABLE"
-                echo "Lectura: sin señales críticas de saturación en esta corrida."
-              fi
-              echo ""
-            }
-            RELAMPO_GO_START=""
-            RELAMPO_GO_END=""
-            RELAMPO_GO_SAMPLE_PEAK=0
-            RELAMPO_GO_IOWAIT_START=""
-            RELAMPO_GO_IOWAIT_END=""
-            RELAMPO_GO_IOWAIT_SAMPLE_PEAK=0
-            RELAMPO_GO_IOWAIT_SAMPLES=0
-            RELAMPO_MEM_PS_PEAK=0
-            RELAMPO_MEM_TOTAL_MB="$(awk '/MemTotal:/ { print int($2/1024) }' /proc/meminfo 2>/dev/null | head -n1)"
-            [ -z "$RELAMPO_MEM_TOTAL_MB" ] && RELAMPO_MEM_TOTAL_MB=0
-            RELAMPO_CPU_PS_PEAK=0
-            relampo_capture_go_sample() {
-              local go_dump go_count go_iowait
-              go_dump="$(curl -fsS --max-time 3 "http://127.0.0.1:6060/debug/pprof/goroutine?debug=2" 2>/dev/null || true)"
-              if [ -z "$go_dump" ]; then
-                return
-              fi
-              go_count="$(printf '%s\n' "$go_dump" | awk 'NR==1 { for (i=1; i<=NF; i++) if ($i ~ /^[0-9]+$/) { print $i; break } }')"
-              if [ -z "$go_count" ]; then
-                go_count="$(printf '%s\n' "$go_dump" | awk '/^goroutine [0-9]+ \\[/ { c++ } END { if (c > 0) print c }')"
-              fi
-              if [ -z "$go_count" ]; then
-                return
-              fi
-              go_iowait="$(printf '%s\n' "$go_dump" | awk '/^goroutine [0-9]+ \\[[^]]*[Ii][Oo] wait[^]]*\\]/ { c++ } END { print c+0 }')"
-              if [ -z "$go_iowait" ]; then
-                go_iowait=0
-              fi
-              RELAMPO_GO_IOWAIT_SAMPLES=$((RELAMPO_GO_IOWAIT_SAMPLES + 1))
-              if [ -z "$RELAMPO_GO_START" ]; then
-                RELAMPO_GO_START="$go_count"
-              fi
-              RELAMPO_GO_END="$go_count"
-              if [ "$go_count" -gt "$RELAMPO_GO_SAMPLE_PEAK" ]; then
-                RELAMPO_GO_SAMPLE_PEAK="$go_count"
-              fi
-              if [ -z "$RELAMPO_GO_IOWAIT_START" ]; then
-                RELAMPO_GO_IOWAIT_START="$go_iowait"
-              fi
-              RELAMPO_GO_IOWAIT_END="$go_iowait"
-              if [ "$go_iowait" -gt "$RELAMPO_GO_IOWAIT_SAMPLE_PEAK" ]; then
-                RELAMPO_GO_IOWAIT_SAMPLE_PEAK="$go_iowait"
-              fi
-            }
-            relampo_capture_process_sample() {
-              local worker_pid="$1"
-              local rss_kb cpu_pct rss_mb
-              rss_kb="$(ps -p "$worker_pid" -o rss= 2>/dev/null | awk 'NR==1 { print int($1+0) }' || true)"
-              cpu_pct="$(ps -p "$worker_pid" -o %cpu= 2>/dev/null | awk 'NR==1 { print $1+0 }' || true)"
-              if [ -n "$rss_kb" ] && [ "$rss_kb" -gt 0 ]; then
-                rss_mb=$(( (rss_kb + 1023) / 1024 ))
-                if [ "$rss_mb" -gt "$RELAMPO_MEM_PS_PEAK" ]; then
-                  RELAMPO_MEM_PS_PEAK="$rss_mb"
+                printf '%s  %s\n' '943d8506d7c9fc4f0d3c0e97a9b4e53af86affdd1fbe525c4f94dd98bd7b8a14' "$HOME/.local/bin/relampo-worker" | sha256sum -c -
+                export RELAMPO_EXPECTED_CAPABILITIES='{"schema_version":1,"version":"RLP-562-86e43000","multi_scenario_parallel":true,"multi_scenario_phase":true,"multi_scenario_authorization":true,"multi_scenario_resolved_load_contract":true,"execution_manifest_version":1}'
+                export RELAMPO_ACTUAL_CAPABILITIES="$("$HOME/.local/bin/relampo-worker" --capabilities)"
+                python3 - <<'PY_CAPABILITIES'
+                import json, os
+                expected = json.loads(os.environ['RELAMPO_EXPECTED_CAPABILITIES'])
+                actual = json.loads(os.environ['RELAMPO_ACTUAL_CAPABILITIES'])
+                if any(actual.get(key) != value for key, value in expected.items()):
+                    raise ValueError('installed worker capabilities differ from pinned receipt')
+                if actual.get('schema_version') != 1 or actual.get('execution_manifest_version') != 1 or not actual.get('multi_scenario_parallel') or not actual.get('multi_scenario_resolved_load_contract'):
+                    raise ValueError('installed worker lacks required multi-scenario evidence')
+                if False and not actual.get('multi_scenario_authorization'):
+                    raise ValueError('installed worker lacks multi-scenario authorization')
+                PY_CAPABILITIES
+                echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            - name: Run worker node
+              env:
+                RELAMPO_NODE: ${{ matrix.node }}
+                PULSE_PPROF: ${{ vars.PULSE_PPROF || '0' }}
+                PULSE_GOROUTINES: ${{ vars.PULSE_GOROUTINES || '0' }}
+                TZ: 'America/New_York'
+                RELAMPO_RUN_AUTHORIZATION: ''
+                RELAMPO_WORKER_LOG_MODE: table
+                RELAMPO_WORKER_SNAPSHOT_SECONDS: '0'
+                RELAMPO_WORKER_PROGRESS_SECONDS: '5'
+                RELAMPO_PROVIDER_JOB_ID: ${{ github.job }}-node-${{ matrix.node }}
+                RELAMPO_EXECUTION_ID: ${{ needs.prepare-context.outputs.execution_id }}
+                RELAMPO_PROVIDER_MANIFEST_DIGEST: ${{ needs.prepare-context.outputs.manifest_digest }}
+                RELAMPO_PROVIDER: github
+                RELAMPO_PROVIDER_PROJECT: ${{ github.repository }}
+                RELAMPO_PROVIDER_RUN_ID: ${{ github.run_id }}
+                RELAMPO_PROVIDER_ATTEMPT: ${{ github.run_attempt }}
+              run: |
+                test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
+                echo "Starting node $RELAMPO_NODE of 2"
+                SCENARIO_PATH='scenarios/parallel.yaml'
+                SCENARIO_DIR="$(dirname "$SCENARIO_PATH")"
+                SCENARIO_FILE="$(basename "$SCENARIO_PATH")"
+                VUS_ARGS=()
+                if [ -n "" ]; then
+                  VUS_ARGS=(--vus )
                 fi
-              fi
-              if [ -n "$cpu_pct" ]; then
-                RELAMPO_CPU_PS_PEAK="$(awk -v a="$RELAMPO_CPU_PS_PEAK" -v b="$cpu_pct" 'BEGIN { if (b > a) printf "%.2f", b; else printf "%.2f", a }')"
-              fi
-            }
-            relampo_jmeter_progress() {
-              local worker_pid="$1"
-              local start_epoch
-              local now
-              local total_elapsed
-              local events_file=""
-              local prev_lines=1
-              while kill -0 "$worker_pid" 2>/dev/null; do
-                relampo_capture_go_sample
-                relampo_capture_process_sample "$worker_pid"
-                sleep 5
-                if [ -z "$events_file" ] || [ ! -f "$events_file" ]; then
-                  events_file="$(ls -1t results/node-*.events.*.jsonl 2>/dev/null | head -n1)"
-                  if [ -z "$events_file" ] || [ ! -f "$events_file" ]; then
-                    continue
+                mkdir -p results
+                WORKER_STATUS=0
+                (
+                  cd "$SCENARIO_DIR"
+                  mkdir -p results
+                  set +e
+                  set -o pipefail
+                  relampo-worker --yaml "$SCENARIO_FILE" --node "$RELAMPO_NODE" --total 2 "${VUS_ARGS[@]}" 2>&1 | tee "results/node-$RELAMPO_NODE.worker.log"
+                  PIPE_STATUS=("${PIPESTATUS[@]}")
+                  WORKER_STATUS=${PIPE_STATUS[0]}
+                  if [ "$WORKER_STATUS" -eq 0 ] && [ "${PIPE_STATUS[1]}" -ne 0 ]; then
+                    WORKER_STATUS=${PIPE_STATUS[1]}
                   fi
-                  prev_lines=1
+                  set -e
+                  printf 'worker_status=%s\n' "$WORKER_STATUS" > "results/node-$RELAMPO_NODE.status.txt"
+                  if [ "$WORKER_STATUS" -ne 0 ] && [ ! -s "results/node-$RELAMPO_NODE.failure.txt" ]; then
+                    printf 'worker run failed\n' > "results/node-$RELAMPO_NODE.failure.txt"
+                  fi
+                  if [ ! -f "results/node-$RELAMPO_NODE.progress.json" ]; then
+                    echo "::warning::Worker did not emit progress snapshots. Update relampo-worker."
+                  fi
+                  exit "$WORKER_STATUS"
+                ) || WORKER_STATUS=$?
+                if [ "$SCENARIO_DIR" != "." ] && [ -d "$SCENARIO_DIR/results" ]; then
+                  cp -R "$SCENARIO_DIR/results"/. results/
                 fi
-                start_epoch="${start_epoch:-$(date +%s)}"
-                now="$(date +%s)"
-                total_elapsed=$((now - start_epoch))
-
-                local total_stats win_stats
-                local total_count total_sum total_min total_max total_err total_p95 total_active total_active_max
-                local win_count win_sum win_min win_max win_err win_p95 win_active win_active_max
-
-                total_stats="$(relampo_extract_stats "$events_file" 1)"
-                win_stats="$(relampo_extract_stats "$events_file" "$prev_lines")"
-                IFS='|' read -r total_count total_sum total_min total_max total_err total_p95 total_active total_active_max <<< "$total_stats"
-                IFS='|' read -r win_count win_sum win_min win_max win_err win_p95 win_active win_active_max <<< "$win_stats"
-
-                relampo_print_summary "+" "$win_count" 5 "$win_sum" "$win_min" "$win_max" "$win_err" "$win_p95" "$win_active" "$win_active_max"
-                relampo_print_summary "=" "$total_count" "$total_elapsed" "$total_sum" "$total_min" "$total_max" "$total_err" "$total_p95" "$total_active" "$total_active_max"
-
-                prev_lines=$(( $(wc -l < "$events_file") + 1 ))
-              done
-            }
-            LOG_PIPE="$(mktemp -u)"
-            mkfifo "$LOG_PIPE"
-            awk 'BEGIN{esc=sprintf("%c",27)} {raw=$0; line=$0; gsub(esc "\\[[0-9;]*[A-Za-z]", "", line); if (line ~ /^METHOD[[:space:]]+PATH/ || line ~ /^-+/ || line ~ /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)[[:space:]]+/ || line ~ /Duration:/ || line ~ /Test finished\./ || line ~ /❌/) { print raw; fflush(); }}' < "$LOG_PIPE" > "$OUTPUT_FILE" &
-            FILTER_PID=$!
-            PULSE_PPROF=1 RELAMPO_WORKER_LOG_MODE=table RELAMPO_WORKER_SNAPSHOT_SECONDS=0 relampo-worker --yaml "$SCENARIO_FILE" --node ${{ matrix.node }} --total 2 $VUS_FLAG > "$LOG_PIPE" 2>&1 &
-            WORKER_PID=$!
-            relampo_jmeter_progress "$WORKER_PID"
-            wait "$WORKER_PID"
-            WORKER_STATUS=$?
-            wait "$FILTER_PID" || true
-            rm -f "$LOG_PIPE"
-            relampo_capture_go_sample
-            mkdir -p results
-            PEAKS_FILE="results/node-${{ matrix.node }}.peaks.json"
-            EXIST_MEM="$(grep -Eo '"mem_peak_mb"[[:space:]]*:[[:space:]]*[0-9]+' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo '[0-9]+' || true)"
-            EXIST_CPU="$(grep -Eo '"cpu_peak"[[:space:]]*:[[:space:]]*[0-9]+([.][0-9]+)?' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo '[0-9]+([.][0-9]+)?' || true)"
-            EXIST_GO="$(grep -Eo '"go_peak"[[:space:]]*:[[:space:]]*[0-9]+' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo '[0-9]+' || true)"
-            EXIST_GO_START="$(grep -Eo '"go_start"[[:space:]]*:[[:space:]]*[0-9]+' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo '[0-9]+' || true)"
-            EXIST_GO_END="$(grep -Eo '"go_end"[[:space:]]*:[[:space:]]*[0-9]+' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo '[0-9]+' || true)"
-            EXIST_GO_DELTA="$(grep -Eo '"go_delta"[[:space:]]*:[[:space:]]*-?[0-9]+' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo -- '-?[0-9]+' || true)"
-            EXIST_GO_IOWAIT_START="$(grep -Eo '"go_iowait_start"[[:space:]]*:[[:space:]]*[0-9]+' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo '[0-9]+' || true)"
-            EXIST_GO_IOWAIT_PEAK="$(grep -Eo '"go_iowait_peak"[[:space:]]*:[[:space:]]*[0-9]+' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo '[0-9]+' || true)"
-            EXIST_GO_IOWAIT_END="$(grep -Eo '"go_iowait_end"[[:space:]]*:[[:space:]]*[0-9]+' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo '[0-9]+' || true)"
-            EXIST_GO_IOWAIT_DELTA="$(grep -Eo '"go_iowait_delta"[[:space:]]*:[[:space:]]*-?[0-9]+' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo -- '-?[0-9]+' || true)"
-            EXIST_GO_IOWAIT_SAMPLES="$(grep -Eo '"go_iowait_samples"[[:space:]]*:[[:space:]]*[0-9]+' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo '[0-9]+' || true)"
-            EXIST_MEM_TOTAL="$(grep -Eo '"mem_total_mb"[[:space:]]*:[[:space:]]*[0-9]+' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo '[0-9]+' || true)"
-            EXIST_MEM_PCT="$(grep -Eo '"mem_peak_pct"[[:space:]]*:[[:space:]]*[0-9]+([.][0-9]+)?' "$PEAKS_FILE" 2>/dev/null | tail -n1 | grep -Eo '[0-9]+([.][0-9]+)?' || true)"
-            [ -z "$EXIST_MEM" ] && EXIST_MEM=0
-            [ -z "$EXIST_CPU" ] && EXIST_CPU=0
-            [ -z "$EXIST_GO" ] && EXIST_GO=0
-            [ -z "$EXIST_GO_START" ] && EXIST_GO_START=0
-            [ -z "$EXIST_GO_END" ] && EXIST_GO_END=0
-            [ -z "$EXIST_GO_IOWAIT_START" ] && EXIST_GO_IOWAIT_START=0
-            [ -z "$EXIST_GO_IOWAIT_PEAK" ] && EXIST_GO_IOWAIT_PEAK=0
-            [ -z "$EXIST_GO_IOWAIT_END" ] && EXIST_GO_IOWAIT_END=0
-            [ -z "$EXIST_GO_IOWAIT_SAMPLES" ] && EXIST_GO_IOWAIT_SAMPLES=0
-            [ -z "$EXIST_MEM_TOTAL" ] && EXIST_MEM_TOTAL=0
-            [ -z "$EXIST_MEM_PCT" ] && EXIST_MEM_PCT=0
-            if [ "$EXIST_GO_START" -eq 0 ] && [ -n "$RELAMPO_GO_START" ]; then
-              EXIST_GO_START="$RELAMPO_GO_START"
-            fi
-            if [ "$EXIST_GO_END" -eq 0 ] && [ -n "$RELAMPO_GO_END" ]; then
-              EXIST_GO_END="$RELAMPO_GO_END"
-            fi
-            if [ -z "$EXIST_GO_DELTA" ]; then
-              EXIST_GO_DELTA=$((EXIST_GO_END - EXIST_GO_START))
-            fi
-            if [ "$EXIST_GO_IOWAIT_START" -eq 0 ] && [ -n "$RELAMPO_GO_IOWAIT_START" ]; then
-              EXIST_GO_IOWAIT_START="$RELAMPO_GO_IOWAIT_START"
-            fi
-            if [ "$EXIST_GO_IOWAIT_END" -eq 0 ] && [ -n "$RELAMPO_GO_IOWAIT_END" ]; then
-              EXIST_GO_IOWAIT_END="$RELAMPO_GO_IOWAIT_END"
-            fi
-            if [ -z "$EXIST_GO_IOWAIT_DELTA" ]; then
-              EXIST_GO_IOWAIT_DELTA=$((EXIST_GO_IOWAIT_END - EXIST_GO_IOWAIT_START))
-            fi
-
-            CLEAN_OUTPUT_FILE="$(mktemp)"
-            awk 'BEGIN{esc=sprintf("%c",27)} {line=$0; gsub(esc "\\[[0-9;]*[A-Za-z]", "", line); print line}' "$OUTPUT_FILE" > "$CLEAN_OUTPUT_FILE"
-            OUT_MEM="$(grep -Eo 'MEM Peak:[[:space:]]*[0-9]+' "$CLEAN_OUTPUT_FILE" | tail -n1 | grep -Eo '[0-9]+' || true)"
-            OUT_CPU="$(grep -Eo 'CPU Peak:[[:space:]]*[0-9]+([.][0-9]+)?' "$CLEAN_OUTPUT_FILE" | tail -n1 | grep -Eo '[0-9]+([.][0-9]+)?' || true)"
-            OUT_GO="$(grep -Eo 'Go:[[:space:]]*[0-9]+' "$CLEAN_OUTPUT_FILE" | tail -n1 | grep -Eo '[0-9]+' || true)"
-            rm -f "$CLEAN_OUTPUT_FILE"
-            [ -z "$OUT_MEM" ] && OUT_MEM=0
-            [ -z "$OUT_CPU" ] && OUT_CPU=0
-            [ -z "$OUT_GO" ] && OUT_GO=0
-
-            FINAL_MEM="$EXIST_MEM"
-            if [ "$OUT_MEM" -gt "$FINAL_MEM" ]; then
-              FINAL_MEM="$OUT_MEM"
-            fi
-            if [ "$RELAMPO_MEM_PS_PEAK" -gt "$FINAL_MEM" ]; then
-              FINAL_MEM="$RELAMPO_MEM_PS_PEAK"
-            fi
-            FINAL_MEM_TOTAL="$EXIST_MEM_TOTAL"
-            if [ "$RELAMPO_MEM_TOTAL_MB" -gt "$FINAL_MEM_TOTAL" ]; then
-              FINAL_MEM_TOTAL="$RELAMPO_MEM_TOTAL_MB"
-            fi
-            FINAL_MEM_PCT="$EXIST_MEM_PCT"
-            if [ "$FINAL_MEM_TOTAL" -gt 0 ]; then
-              CALC_MEM_PCT="$(awk -v used="$FINAL_MEM" -v total="$FINAL_MEM_TOTAL" 'BEGIN { if (total > 0) printf "%.2f", (used * 100.0) / total; else printf "0.00" }')"
-              FINAL_MEM_PCT="$(awk -v a="$FINAL_MEM_PCT" -v b="$CALC_MEM_PCT" 'BEGIN { if (b > a) printf "%.2f", b; else printf "%.2f", a }')"
-            fi
-            FINAL_CPU="$(awk -v a="$EXIST_CPU" -v b="$OUT_CPU" -v c="$RELAMPO_CPU_PS_PEAK" 'BEGIN { m=a; if (b > m) m=b; if (c > m) m=c; printf "%.2f", m }')"
-            FINAL_GO="$EXIST_GO"
-            if [ "$OUT_GO" -gt "$FINAL_GO" ]; then
-              FINAL_GO="$OUT_GO"
-            fi
-            if [ "$RELAMPO_GO_SAMPLE_PEAK" -gt "$FINAL_GO" ]; then
-              FINAL_GO="$RELAMPO_GO_SAMPLE_PEAK"
-            fi
-            FINAL_GO_IOWAIT="$EXIST_GO_IOWAIT_PEAK"
-            if [ "$RELAMPO_GO_IOWAIT_SAMPLE_PEAK" -gt "$FINAL_GO_IOWAIT" ]; then
-              FINAL_GO_IOWAIT="$RELAMPO_GO_IOWAIT_SAMPLE_PEAK"
-            fi
-            FINAL_GO_IOWAIT_SAMPLES="$EXIST_GO_IOWAIT_SAMPLES"
-            if [ "$RELAMPO_GO_IOWAIT_SAMPLES" -gt "$FINAL_GO_IOWAIT_SAMPLES" ]; then
-              FINAL_GO_IOWAIT_SAMPLES="$RELAMPO_GO_IOWAIT_SAMPLES"
-            fi
-            printf '{"mem_peak_mb":%s,"mem_total_mb":%s,"mem_peak_pct":%s,"cpu_peak":%s,"go_peak":%s,"go_start":%s,"go_end":%s,"go_delta":%s,"go_iowait_peak":%s,"go_iowait_start":%s,"go_iowait_end":%s,"go_iowait_delta":%s,"go_iowait_samples":%s}\n' "$FINAL_MEM" "$FINAL_MEM_TOTAL" "$FINAL_MEM_PCT" "$FINAL_CPU" "$FINAL_GO" "$EXIST_GO_START" "$EXIST_GO_END" "$EXIST_GO_DELTA" "$FINAL_GO_IOWAIT" "$EXIST_GO_IOWAIT_START" "$EXIST_GO_IOWAIT_END" "$EXIST_GO_IOWAIT_DELTA" "$FINAL_GO_IOWAIT_SAMPLES" > "$PEAKS_FILE"
-            if [ "$RELAMPO_P95_ALERT" -eq 1 ]; then
-              echo "ⅰ P90 response-time reference"
-              echo "   ⚠ P90 > 8s: alert zone. User attention is at risk, and the experience may feel frustrating."
-              echo "   ⚠ P90 > 15s: severe alert zone. This response time is generally beyond acceptable user expectations."
-              echo ""
-              echo "   Note: this alert does not automatically mean the application is slow."
-              echo "   It is a reference signal based on user-experience and performance heuristics."
-              echo ""
-              echo "   Based on classic user response-time guidance (Jakob Nielsen: attention degrades around 10s)"
-              echo "   and practical performance engineering ranges commonly associated with Scott Barber."
-            fi
-            FINAL_TOTAL_COUNT=0
-            FINAL_TOTAL_ERR=0
-            FINAL_TOTAL_P95=0
-            FINAL_EVENTS_FILE="$(ls -1t results/node-*.events.*.jsonl 2>/dev/null | head -n1)"
-            if [ -n "$FINAL_EVENTS_FILE" ] && [ -f "$FINAL_EVENTS_FILE" ]; then
-              FINAL_TOTAL_STATS="$(relampo_extract_stats "$FINAL_EVENTS_FILE" 1)"
-              IFS='|' read -r FINAL_TOTAL_COUNT _ _ _ FINAL_TOTAL_ERR FINAL_TOTAL_P95 _ _ <<< "$FINAL_TOTAL_STATS"
-            fi
-            [ -z "$FINAL_TOTAL_COUNT" ] && FINAL_TOTAL_COUNT=0
-            [ -z "$FINAL_TOTAL_ERR" ] && FINAL_TOTAL_ERR=0
-            [ -z "$FINAL_TOTAL_P95" ] && FINAL_TOTAL_P95=0
-            relampo_print_github_diagnosis "$FINAL_TOTAL_COUNT" "$FINAL_TOTAL_ERR" "$FINAL_TOTAL_P95" "$FINAL_MEM" "$FINAL_MEM_PCT" "$FINAL_CPU" "$EXIST_GO_DELTA" "$FINAL_GO_IOWAIT" "$FINAL_GO_IOWAIT_SAMPLES"
-            cat "$OUTPUT_FILE"
-            rm -f "$OUTPUT_FILE"
-            exit "$WORKER_STATUS"
-          ) || WORKER_STATUS=$?
-          mkdir -p results
-          printf 'worker_status=%s\n' "$WORKER_STATUS" > "results/node-${{ matrix.node }}.status.txt"
-          if [ -d "$SCENARIO_DIR/results" ]; then
-            cp -R "$SCENARIO_DIR/results"/. results/
-          else
-            echo "results directory not found in scenario path: $SCENARIO_DIR/results" >> "results/node-${{ matrix.node }}.status.txt"
-          fi
-          exit "$WORKER_STATUS"
-
-      - name: Upload logs/artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pulse-results-node-${{ matrix.node }}
-          path: results/
+                printf 'worker_status=%s\n' "$WORKER_STATUS" > "results/node-$RELAMPO_NODE.status.txt"
+                exit "$WORKER_STATUS"
+            - name: Upload logs/artifacts
+              if: always()
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                name: pulse-results-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
+                path: results/
+                retention-days: ${{ vars.RELAMPO_EVIDENCE_RETENTION_DAYS || 7 }}
+        name: run-nodes-node-${{ matrix.node }}
+        timeout-minutes: 36

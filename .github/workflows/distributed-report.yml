@@ -1,0 +1,97 @@
+name: Relampo Cloud Reports
+run-name: Relampo reports for ${{ github.event.workflow_run.id }} (attempt ${{ github.event.workflow_run.run_attempt }})
+
+on:
+  workflow_run:
+    workflows: ["🌩️ Distributed Relampo Test"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  report:
+    if: github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN: ${{ github.event.workflow_run.id }}
+      SOURCE_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+      GOMEMLIMIT: 3GiB
+      GOGC: '50'
+    steps:
+      - name: Checkout exact source execution
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Read execution context
+        id: context
+        run: |
+          mkdir -p cloud-context cloud-reports
+          if ! gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" --name "relampo-context-attempt-$SOURCE_ATTEMPT" --dir cloud-context; then
+            cp .relampo/report-context.json cloud-context/report-context.json
+            export RECOVERED_CONTEXT=true
+          fi
+          python3 - <<'PY_CONTEXT'
+          import json, os, pathlib, re
+          context = json.loads(pathlib.Path('cloud-context/report-context.json').read_text())
+          if os.environ.get('RECOVERED_CONTEXT') == 'true':
+              if context['repository'] != os.environ['GITHUB_REPOSITORY'] or context['run_id'] != 0 or context['source_sha']:
+                  raise ValueError('invalid prepared context fallback')
+              context.update(run_id=int(os.environ['SOURCE_RUN']), attempt=int(os.environ['SOURCE_ATTEMPT']), source_sha=os.environ['SOURCE_SHA'])
+              pathlib.Path('cloud-context/report-context.json').write_text(json.dumps(context))
+          if (context['repository'], str(context['run_id']), str(context['attempt']), context['source_sha']) != (os.environ['GITHUB_REPOSITORY'], os.environ['SOURCE_RUN'], os.environ['SOURCE_ATTEMPT'], os.environ['SOURCE_SHA']):
+              raise ValueError('execution context identity mismatch')
+          version = context['version'].removeprefix('v')
+          if version != 'dev' and not re.fullmatch(r'\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?', version):
+              raise ValueError('invalid generator version')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('version=' + version + '\n')
+          PY_CONTEXT
+
+      - name: Install matching report generator
+        env:
+          RELAMPO_VERSION: ${{ steps.context.outputs.version }}
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          if [ -f .relampo/bin/relampo ]; then
+            (cd .relampo/bin && sha256sum -c relampo.sha256)
+            install -m 0755 .relampo/bin/relampo "$HOME/.local/bin/relampo"
+          else
+            curl -fsSL "https://dl.relampo.com/relampo/v${RELAMPO_VERSION}/relampo_${RELAMPO_VERSION}_linux_amd64.tar.gz" -o /tmp/relampo.tar.gz
+            tar -xzf /tmp/relampo.tar.gz -C /tmp
+            install -m 0755 /tmp/relampo "$HOME/.local/bin/relampo"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Generate and publish unchanged reports
+        run: |
+          free -m > cloud-reports/runner-before.txt
+          df -B1 / /tmp >> cloud-reports/runner-before.txt
+          (
+            while true; do
+              date -u +%FT%TZ
+              du -sb cloud-reports /tmp/relampo-cloud-report-* 2>/dev/null || true
+              df -B1 /tmp | tail -1
+              free -b | head -2
+              sleep 5
+            done
+          ) > cloud-reports/storage-memory.log &
+          MONITOR_PID=$!
+          trap 'kill "$MONITOR_PID" 2>/dev/null || true' EXIT
+          /usr/bin/time -v -o cloud-reports/generator-resources.txt relampo internal-cloud-report --context cloud-context/report-context.json --output cloud-reports
+
+      - name: Preserve report diagnostics and any unpublished files
+        continue-on-error: true
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: relampo-report-diagnostics-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: cloud-reports/
+          if-no-files-found: warn
+          retention-days: ${{ vars.RELAMPO_EVIDENCE_RETENTION_DAYS || 7 }}

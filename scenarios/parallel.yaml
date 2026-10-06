@@ -1,0 +1,27 @@
+test:
+    name: RLP-777 parallel native smoke
+    scenario_mode: parallel
+data_source:
+    type: csv
+    file: unused-missing-root.csv
+    mode: per_vu
+    variable_names: [value]
+scenarios:
+    - name: A
+      load: {users: 3, duration: 3s, iterations: 1}
+      data_source:
+        type: csv
+        file: data/a11c4d1812ab449b4a5b2225abfd79bf594b499ec3009e45206fe80aeed32256.csv
+        mode: per_vu
+        variable_names: [value]
+      steps:
+        - get: http://127.0.0.1:8765/A/{{value}}
+    - name: B
+      load: {users: 2, duration: 3s, iterations: 1}
+      data_source:
+        type: csv
+        file: data/0b739e7e89b5c98c63a34b3b1be04e03be10a7803e7f8371ce6b04932d958cdd.csv
+        mode: per_vu
+        variable_names: [value]
+      steps:
+        - get: http://127.0.0.1:8765/B/{{value}}
