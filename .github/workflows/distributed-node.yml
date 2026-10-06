@@ -80,8 +80,9 @@ jobs:
                 path: .relampo/report-context.json
                 include-hidden-files: true
                 retention-days: ${{ vars.RELAMPO_EVIDENCE_RETENTION_DAYS || 7 }}
-    run-nodes:
-        needs: prepare-context
+    scenario-1:
+        needs:
+            - prepare-context
         runs-on: ubuntu-latest
         strategy:
             fail-fast: false
@@ -90,18 +91,10 @@ jobs:
         steps:
             - name: Checkout repo
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - name: Start task-owned loopback target
-              run: |
-                if [ "${{ matrix.node }}" = 2 ]; then sleep 2; fi
-                mkdir -p results
-                python3 .relampo/smoke-target.py > results/target-server.log 2>&1 &
-                echo "$!" > results/target.pid
-                sleep 0.2
-                kill -0 "$(cat results/target.pid)"
             - name: Install relampo-worker
               run: |
                 test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
-                SCENARIO_PATH='scenarios/parallel.yaml'
+                SCENARIO_PATH='scenarios/sequential.yaml'
                 mkdir -p "$HOME/.local/bin"
                 WORKER_OVERRIDE="$(dirname "$SCENARIO_PATH")/relampo-worker"
                 if [ -f "$WORKER_OVERRIDE" ]; then
@@ -110,8 +103,8 @@ jobs:
                 else
                   echo '::error::Selected worker override is missing'; exit 1
                 fi
-                printf '%s  %s\n' '943d8506d7c9fc4f0d3c0e97a9b4e53af86affdd1fbe525c4f94dd98bd7b8a14' "$HOME/.local/bin/relampo-worker" | sha256sum -c -
-                export RELAMPO_EXPECTED_CAPABILITIES='{"schema_version":1,"version":"RLP-562-86e43000","multi_scenario_parallel":true,"multi_scenario_phase":true,"multi_scenario_authorization":true,"multi_scenario_resolved_load_contract":true,"execution_manifest_version":1}'
+                printf '%s  %s\n' 'bd80313069a0cdddbca67d3b1d21a22f2dde4c4220fdf75c195b09684668f871' "$HOME/.local/bin/relampo-worker" | sha256sum -c -
+                export RELAMPO_EXPECTED_CAPABILITIES='{"schema_version":1,"version":"dev","multi_scenario_parallel":true,"multi_scenario_phase":true,"multi_scenario_authorization":true,"multi_scenario_resolved_load_contract":true,"execution_manifest_version":1}'
                 export RELAMPO_ACTUAL_CAPABILITIES="$("$HOME/.local/bin/relampo-worker" --capabilities)"
                 python3 - <<'PY_CAPABILITIES'
                 import json, os
@@ -119,7 +112,7 @@ jobs:
                 actual = json.loads(os.environ['RELAMPO_ACTUAL_CAPABILITIES'])
                 if any(actual.get(key) != value for key, value in expected.items()):
                     raise ValueError('installed worker capabilities differ from pinned receipt')
-                if actual.get('schema_version') != 1 or actual.get('execution_manifest_version') != 1 or not actual.get('multi_scenario_parallel') or not actual.get('multi_scenario_resolved_load_contract'):
+                if actual.get('schema_version') != 1 or actual.get('execution_manifest_version') != 1 or not actual.get('multi_scenario_phase') or not actual.get('multi_scenario_resolved_load_contract'):
                     raise ValueError('installed worker lacks required multi-scenario evidence')
                 if False and not actual.get('multi_scenario_authorization'):
                     raise ValueError('installed worker lacks multi-scenario authorization')
@@ -135,17 +128,19 @@ jobs:
                 RELAMPO_WORKER_LOG_MODE: table
                 RELAMPO_WORKER_SNAPSHOT_SECONDS: '0'
                 RELAMPO_WORKER_PROGRESS_SECONDS: '5'
-                RELAMPO_PROVIDER_PROJECT: ${{ github.repository }}
                 RELAMPO_PROVIDER_RUN_ID: ${{ github.run_id }}
                 RELAMPO_PROVIDER_ATTEMPT: ${{ github.run_attempt }}
                 RELAMPO_PROVIDER_JOB_ID: ${{ github.job }}-node-${{ matrix.node }}
                 RELAMPO_EXECUTION_ID: ${{ needs.prepare-context.outputs.execution_id }}
                 RELAMPO_PROVIDER_MANIFEST_DIGEST: ${{ needs.prepare-context.outputs.manifest_digest }}
                 RELAMPO_PROVIDER: github
+                RELAMPO_PROVIDER_PROJECT: ${{ github.repository }}
               run: |
                 test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
+                SCENARIO_NAME="$(printf %s 'QQ==' | base64 --decode; printf .)"
+                SCENARIO_NAME="${SCENARIO_NAME%.}"
                 echo "Starting node $RELAMPO_NODE of 2"
-                SCENARIO_PATH='scenarios/parallel.yaml'
+                SCENARIO_PATH='scenarios/sequential.yaml'
                 SCENARIO_DIR="$(dirname "$SCENARIO_PATH")"
                 SCENARIO_FILE="$(basename "$SCENARIO_PATH")"
                 VUS_ARGS=()
@@ -159,7 +154,7 @@ jobs:
                   mkdir -p results
                   set +e
                   set -o pipefail
-                  relampo-worker --yaml "$SCENARIO_FILE" --node "$RELAMPO_NODE" --total 2 "${VUS_ARGS[@]}" 2>&1 | tee "results/node-$RELAMPO_NODE.worker.log"
+                  relampo-worker --yaml "$SCENARIO_FILE" --scenario "$SCENARIO_NAME" --node "$RELAMPO_NODE" --total 2 "${VUS_ARGS[@]}" 2>&1 | tee "results/node-$RELAMPO_NODE.worker.log"
                   PIPE_STATUS=("${PIPESTATUS[@]}")
                   WORKER_STATUS=${PIPE_STATUS[0]}
                   if [ "$WORKER_STATUS" -eq 0 ] && [ "${PIPE_STATUS[1]}" -ne 0 ]; then
@@ -184,8 +179,115 @@ jobs:
               if: always()
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
-                name: pulse-results-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
+                name: pulse-results-scenario-1-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
                 path: results/
                 retention-days: ${{ vars.RELAMPO_EVIDENCE_RETENTION_DAYS || 7 }}
-        name: run-nodes-node-${{ matrix.node }}
+        name: scenario-1-node-${{ matrix.node }}
         timeout-minutes: 36
+        if: ${{ !cancelled() && needs.prepare-context.result == 'success' }}
+    scenario-2:
+        needs:
+            - prepare-context
+            - scenario-1
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                node: [1, 2]
+        steps:
+            - name: Checkout repo
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - name: Install relampo-worker
+              run: |
+                test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
+                SCENARIO_PATH='scenarios/sequential.yaml'
+                mkdir -p "$HOME/.local/bin"
+                WORKER_OVERRIDE="$(dirname "$SCENARIO_PATH")/relampo-worker"
+                if [ -f "$WORKER_OVERRIDE" ]; then
+                  (cd "$(dirname "$WORKER_OVERRIDE")" && sha256sum -c relampo-worker.sha256)
+                  install -m 0755 "$WORKER_OVERRIDE" "$HOME/.local/bin/relampo-worker"
+                else
+                  echo '::error::Selected worker override is missing'; exit 1
+                fi
+                printf '%s  %s\n' 'bd80313069a0cdddbca67d3b1d21a22f2dde4c4220fdf75c195b09684668f871' "$HOME/.local/bin/relampo-worker" | sha256sum -c -
+                export RELAMPO_EXPECTED_CAPABILITIES='{"schema_version":1,"version":"dev","multi_scenario_parallel":true,"multi_scenario_phase":true,"multi_scenario_authorization":true,"multi_scenario_resolved_load_contract":true,"execution_manifest_version":1}'
+                export RELAMPO_ACTUAL_CAPABILITIES="$("$HOME/.local/bin/relampo-worker" --capabilities)"
+                python3 - <<'PY_CAPABILITIES'
+                import json, os
+                expected = json.loads(os.environ['RELAMPO_EXPECTED_CAPABILITIES'])
+                actual = json.loads(os.environ['RELAMPO_ACTUAL_CAPABILITIES'])
+                if any(actual.get(key) != value for key, value in expected.items()):
+                    raise ValueError('installed worker capabilities differ from pinned receipt')
+                if actual.get('schema_version') != 1 or actual.get('execution_manifest_version') != 1 or not actual.get('multi_scenario_phase') or not actual.get('multi_scenario_resolved_load_contract'):
+                    raise ValueError('installed worker lacks required multi-scenario evidence')
+                if False and not actual.get('multi_scenario_authorization'):
+                    raise ValueError('installed worker lacks multi-scenario authorization')
+                PY_CAPABILITIES
+                echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            - name: Run worker node
+              env:
+                RELAMPO_NODE: ${{ matrix.node }}
+                PULSE_PPROF: ${{ vars.PULSE_PPROF || '0' }}
+                PULSE_GOROUTINES: ${{ vars.PULSE_GOROUTINES || '0' }}
+                TZ: 'America/New_York'
+                RELAMPO_RUN_AUTHORIZATION: ''
+                RELAMPO_WORKER_LOG_MODE: table
+                RELAMPO_WORKER_SNAPSHOT_SECONDS: '0'
+                RELAMPO_WORKER_PROGRESS_SECONDS: '5'
+                RELAMPO_PROVIDER_RUN_ID: ${{ github.run_id }}
+                RELAMPO_PROVIDER_ATTEMPT: ${{ github.run_attempt }}
+                RELAMPO_PROVIDER_JOB_ID: ${{ github.job }}-node-${{ matrix.node }}
+                RELAMPO_EXECUTION_ID: ${{ needs.prepare-context.outputs.execution_id }}
+                RELAMPO_PROVIDER_MANIFEST_DIGEST: ${{ needs.prepare-context.outputs.manifest_digest }}
+                RELAMPO_PROVIDER: github
+                RELAMPO_PROVIDER_PROJECT: ${{ github.repository }}
+              run: |
+                test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
+                SCENARIO_NAME="$(printf %s 'Qg==' | base64 --decode; printf .)"
+                SCENARIO_NAME="${SCENARIO_NAME%.}"
+                echo "Starting node $RELAMPO_NODE of 2"
+                SCENARIO_PATH='scenarios/sequential.yaml'
+                SCENARIO_DIR="$(dirname "$SCENARIO_PATH")"
+                SCENARIO_FILE="$(basename "$SCENARIO_PATH")"
+                VUS_ARGS=()
+                if [ -n "" ]; then
+                  VUS_ARGS=(--vus )
+                fi
+                mkdir -p results
+                WORKER_STATUS=0
+                (
+                  cd "$SCENARIO_DIR"
+                  mkdir -p results
+                  set +e
+                  set -o pipefail
+                  relampo-worker --yaml "$SCENARIO_FILE" --scenario "$SCENARIO_NAME" --node "$RELAMPO_NODE" --total 2 "${VUS_ARGS[@]}" 2>&1 | tee "results/node-$RELAMPO_NODE.worker.log"
+                  PIPE_STATUS=("${PIPESTATUS[@]}")
+                  WORKER_STATUS=${PIPE_STATUS[0]}
+                  if [ "$WORKER_STATUS" -eq 0 ] && [ "${PIPE_STATUS[1]}" -ne 0 ]; then
+                    WORKER_STATUS=${PIPE_STATUS[1]}
+                  fi
+                  set -e
+                  printf 'worker_status=%s\n' "$WORKER_STATUS" > "results/node-$RELAMPO_NODE.status.txt"
+                  if [ "$WORKER_STATUS" -ne 0 ] && [ ! -s "results/node-$RELAMPO_NODE.failure.txt" ]; then
+                    printf 'worker run failed\n' > "results/node-$RELAMPO_NODE.failure.txt"
+                  fi
+                  if [ ! -f "results/node-$RELAMPO_NODE.progress.json" ]; then
+                    echo "::warning::Worker did not emit progress snapshots. Update relampo-worker."
+                  fi
+                  exit "$WORKER_STATUS"
+                ) || WORKER_STATUS=$?
+                if [ "$SCENARIO_DIR" != "." ] && [ -d "$SCENARIO_DIR/results" ]; then
+                  cp -R "$SCENARIO_DIR/results"/. results/
+                fi
+                printf 'worker_status=%s\n' "$WORKER_STATUS" > "results/node-$RELAMPO_NODE.status.txt"
+                exit "$WORKER_STATUS"
+            - name: Upload logs/artifacts
+              if: always()
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                name: pulse-results-scenario-2-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
+                path: results/
+                retention-days: ${{ vars.RELAMPO_EVIDENCE_RETENTION_DAYS || 7 }}
+        name: scenario-2-node-${{ matrix.node }}
+        timeout-minutes: 36
+        if: ${{ !cancelled() && needs.prepare-context.result == 'success' }}

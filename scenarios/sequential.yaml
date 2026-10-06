@@ -1,0 +1,27 @@
+test:
+    name: RLP-779 sequential native smoke
+    scenario_mode: sequential
+data_source:
+    type: csv
+    file: unused-missing-root.csv
+    mode: per_vu
+    variable_names: [value]
+scenarios:
+    - name: A
+      load: {users: 3, duration: 3s, iterations: 1}
+      data_source:
+        type: csv
+        file: data/11548a3655e6a97c91e3bf8c9665fb7d5a86c0570cafa1d671da7446986654d7.csv
+        mode: per_vu
+        variable_names: [value]
+      steps:
+        - get: http://127.0.0.1:8765/A/{{value}}
+    - name: B
+      load: {users: 2, duration: 3s, iterations: 1}
+      data_source:
+        type: csv
+        file: data/d4c564feb33c6359eea5e2be2fc504141fb01bda9b78e82ddec2908e945ad4e5.csv
+        mode: per_vu
+        variable_names: [value]
+      steps:
+        - get: http://127.0.0.1:8765/B/{{value}}
