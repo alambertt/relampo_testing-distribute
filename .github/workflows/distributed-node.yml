@@ -1,191 +1,127 @@
-name: "\U0001F329️ Distributed Relampo Test"
-on:
-    workflow_dispatch:
+name: RLP-781 Linux worker capability proof
+run-name: RLP-781 capability proof ${{ inputs.proof_id }}
+
+'on':
+  workflow_dispatch:
+    inputs:
+      proof_id:
+        description: Unique task proof ID
+        required: true
+        type: string
+      archive_sha256:
+        description: Exact compressed worker SHA256
+        required: true
+        type: string
+      binary_sha256:
+        description: Exact final worker binary SHA256
+        required: true
+        type: string
+
 permissions:
-    contents: read
+  contents: read
+
 jobs:
-    prepare-context:
-        runs-on: ubuntu-latest
-        permissions:
-            contents: write
+  capability-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout the dispatched exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify final bytes and run capabilities without load
+        timeout-minutes: 1
         env:
-            GH_TOKEN: ${{ github.token }}
-        outputs:
-            version: ${{ steps.context.outputs.version }}
-            execution_id: ${{ steps.context.outputs.execution_id }}
-            manifest_digest: ${{ steps.context.outputs.manifest_digest }}
-        steps:
-            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - name: Verify cloud publication access before load
-              run: |
-                BRANCH=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch')
-                if [ "$(gh api "repos/$GITHUB_REPOSITORY/branches/$BRANCH" --jq '.protected')" != false ]; then
-                  echo '::error::Cloud report indexes require direct writes to the default branch. Branch protection blocks this publication mode.'
-                  exit 1
-                fi
-                HEAD_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq '.object.sha')
-                TAG="relampo-report-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-                TAG_CREATED=false
-                RELEASE_ID=''
-                cleanup() {
-                  if [ -n "$RELEASE_ID" ]; then gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"; fi
-                  if [ "$TAG_CREATED" = true ]; then gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"; fi
-                }
-                trap cleanup EXIT
-                # Tag creation verifies contents:write without racing default-branch updates.
-                gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$HEAD_SHA" >/dev/null
-                TAG_CREATED=true
-                gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"
-                TAG_CREATED=false
-                RELEASE_ID=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f target_commitish="$BRANCH" -f name="Relampo publication preflight $GITHUB_RUN_ID" -F draft=true -F prerelease=true -f make_latest=false --jq '.id')
-                gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
-                RELEASE_ID=''
-            - name: Capture immutable execution context
-              id: context
-              env:
-                RELAMPO_REPOSITORY: ${{ github.repository }}
-                RELAMPO_RUN_ID: ${{ github.run_id }}
-                RELAMPO_RUN_ATTEMPT: ${{ github.run_attempt }}
-                RELAMPO_SOURCE_SHA: ${{ github.sha }}
-              run: |
-                test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
-                python3 - <<'PY_CONTEXT'
-                import hashlib, json, os, pathlib, re, urllib.request
-                path = pathlib.Path('.relampo/report-context.json')
-                context = json.loads(path.read_text())
-                version = context['version']
-                if version == 'dev' and not pathlib.Path('.relampo/bin/relampo').is_file():
-                    version = urllib.request.urlopen('https://dl.relampo.com/relampo/latest.txt').read().decode().strip()
-                if version != 'dev' and not re.fullmatch(r'v?\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?', version):
-                    raise ValueError('invalid generator version')
-                context.update(repository=os.environ['RELAMPO_REPOSITORY'], run_id=int(os.environ['RELAMPO_RUN_ID']), attempt=int(os.environ['RELAMPO_RUN_ATTEMPT']), source_sha=os.environ['RELAMPO_SOURCE_SHA'], version=version)
-                if hashlib.sha256(pathlib.Path(context['scenario']).read_bytes()).hexdigest() != context['scenario_sha256']:
-                    raise ValueError('scenario digest mismatch')
-                expected = context['expected_execution']
-                expected['provider_run_id'] = os.environ['RELAMPO_RUN_ID']
-                expected.pop('provider_manifest_digest', None)
-                digest = hashlib.sha256(json.dumps(expected, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-                expected['provider_manifest_digest'] = digest
-                path.write_text(json.dumps(context))
-                with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-                    output.write('execution_id=' + expected['execution_id'] + '\n')
-                    output.write('manifest_digest=' + digest + '\n')
-                with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-                    output.write('version=' + version.removeprefix('v') + '\n')
-                PY_CONTEXT
-            - name: Upload execution context
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-              with:
-                name: relampo-context-attempt-${{ github.run_attempt }}
-                path: .relampo/report-context.json
-                include-hidden-files: true
-                retention-days: ${{ vars.RELAMPO_EVIDENCE_RETENTION_DAYS || 7 }}
-    run-nodes:
-        needs: prepare-context
-        runs-on: ubuntu-latest
-        strategy:
-            fail-fast: false
-            matrix:
-                node: [1, 2]
-        steps:
-            - name: Checkout repo
-              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - name: Start task-owned loopback target
-              run: |
-                if [ "${{ matrix.node }}" = 2 ]; then sleep 2; fi
-                mkdir -p results
-                python3 .relampo/smoke-target.py > results/target-server.log 2>&1 &
-                echo "$!" > results/target.pid
-                sleep 0.2
-                kill -0 "$(cat results/target.pid)"
-            - name: Install relampo-worker
-              run: |
-                test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
-                SCENARIO_PATH='scenarios/parallel.yaml'
-                mkdir -p "$HOME/.local/bin"
-                WORKER_OVERRIDE="$(dirname "$SCENARIO_PATH")/relampo-worker"
-                if [ -f "$WORKER_OVERRIDE" ]; then
-                  (cd "$(dirname "$WORKER_OVERRIDE")" && sha256sum -c relampo-worker.sha256)
-                  install -m 0755 "$WORKER_OVERRIDE" "$HOME/.local/bin/relampo-worker"
-                else
-                  echo '::error::Selected worker override is missing'; exit 1
-                fi
-                printf '%s  %s\n' '943d8506d7c9fc4f0d3c0e97a9b4e53af86affdd1fbe525c4f94dd98bd7b8a14' "$HOME/.local/bin/relampo-worker" | sha256sum -c -
-                export RELAMPO_EXPECTED_CAPABILITIES='{"schema_version":1,"version":"RLP-562-86e43000","multi_scenario_parallel":true,"multi_scenario_phase":true,"multi_scenario_authorization":true,"multi_scenario_resolved_load_contract":true,"execution_manifest_version":1}'
-                export RELAMPO_ACTUAL_CAPABILITIES="$("$HOME/.local/bin/relampo-worker" --capabilities)"
-                python3 - <<'PY_CAPABILITIES'
-                import json, os
-                expected = json.loads(os.environ['RELAMPO_EXPECTED_CAPABILITIES'])
-                actual = json.loads(os.environ['RELAMPO_ACTUAL_CAPABILITIES'])
-                if any(actual.get(key) != value for key, value in expected.items()):
-                    raise ValueError('installed worker capabilities differ from pinned receipt')
-                if actual.get('schema_version') != 1 or actual.get('execution_manifest_version') != 1 or not actual.get('multi_scenario_parallel') or not actual.get('multi_scenario_resolved_load_contract'):
-                    raise ValueError('installed worker lacks required multi-scenario evidence')
-                if False and not actual.get('multi_scenario_authorization'):
-                    raise ValueError('installed worker lacks multi-scenario authorization')
-                PY_CAPABILITIES
-                echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-            - name: Run worker node
-              env:
-                RELAMPO_NODE: ${{ matrix.node }}
-                PULSE_PPROF: ${{ vars.PULSE_PPROF || '0' }}
-                PULSE_GOROUTINES: ${{ vars.PULSE_GOROUTINES || '0' }}
-                TZ: 'America/New_York'
-                RELAMPO_RUN_AUTHORIZATION: ''
-                RELAMPO_WORKER_LOG_MODE: table
-                RELAMPO_WORKER_SNAPSHOT_SECONDS: '0'
-                RELAMPO_WORKER_PROGRESS_SECONDS: '5'
-                RELAMPO_PROVIDER_PROJECT: ${{ github.repository }}
-                RELAMPO_PROVIDER_RUN_ID: ${{ github.run_id }}
-                RELAMPO_PROVIDER_ATTEMPT: ${{ github.run_attempt }}
-                RELAMPO_PROVIDER_JOB_ID: ${{ github.job }}-node-${{ matrix.node }}
-                RELAMPO_EXECUTION_ID: ${{ needs.prepare-context.outputs.execution_id }}
-                RELAMPO_PROVIDER_MANIFEST_DIGEST: ${{ needs.prepare-context.outputs.manifest_digest }}
-                RELAMPO_PROVIDER: github
-              run: |
-                test "$GITHUB_RUN_ATTEMPT" = 1 || { echo '::error::Multi-scenario load reruns require a new Relampo execution'; exit 1; }
-                echo "Starting node $RELAMPO_NODE of 2"
-                SCENARIO_PATH='scenarios/parallel.yaml'
-                SCENARIO_DIR="$(dirname "$SCENARIO_PATH")"
-                SCENARIO_FILE="$(basename "$SCENARIO_PATH")"
-                VUS_ARGS=()
-                if [ -n "" ]; then
-                  VUS_ARGS=(--vus )
-                fi
-                mkdir -p results
-                WORKER_STATUS=0
-                (
-                  cd "$SCENARIO_DIR"
-                  mkdir -p results
-                  set +e
-                  set -o pipefail
-                  relampo-worker --yaml "$SCENARIO_FILE" --node "$RELAMPO_NODE" --total 2 "${VUS_ARGS[@]}" 2>&1 | tee "results/node-$RELAMPO_NODE.worker.log"
-                  PIPE_STATUS=("${PIPESTATUS[@]}")
-                  WORKER_STATUS=${PIPE_STATUS[0]}
-                  if [ "$WORKER_STATUS" -eq 0 ] && [ "${PIPE_STATUS[1]}" -ne 0 ]; then
-                    WORKER_STATUS=${PIPE_STATUS[1]}
-                  fi
-                  set -e
-                  printf 'worker_status=%s\n' "$WORKER_STATUS" > "results/node-$RELAMPO_NODE.status.txt"
-                  if [ "$WORKER_STATUS" -ne 0 ] && [ ! -s "results/node-$RELAMPO_NODE.failure.txt" ]; then
-                    printf 'worker run failed\n' > "results/node-$RELAMPO_NODE.failure.txt"
-                  fi
-                  if [ ! -f "results/node-$RELAMPO_NODE.progress.json" ]; then
-                    echo "::warning::Worker did not emit progress snapshots. Update relampo-worker."
-                  fi
-                  exit "$WORKER_STATUS"
-                ) || WORKER_STATUS=$?
-                if [ "$SCENARIO_DIR" != "." ] && [ -d "$SCENARIO_DIR/results" ]; then
-                  cp -R "$SCENARIO_DIR/results"/. results/
-                fi
-                printf 'worker_status=%s\n' "$WORKER_STATUS" > "results/node-$RELAMPO_NODE.status.txt"
-                exit "$WORKER_STATUS"
-            - name: Upload logs/artifacts
-              if: always()
-              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-              with:
-                name: pulse-results-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
-                path: results/
-                retention-days: ${{ vars.RELAMPO_EVIDENCE_RETENTION_DAYS || 7 }}
-        name: run-nodes-node-${{ matrix.node }}
-        timeout-minutes: 36
+          PROOF_ID: ${{ inputs.proof_id }}
+          PROOF_ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+          PROOF_BINARY_SHA256: ${{ inputs.binary_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, platform, re, shutil, subprocess, tarfile
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          require(platform.system() == 'Linux' and platform.machine() == 'x86_64',
+                  'Capability proof requires native Linux/amd64.')
+          require(os.environ['GITHUB_REPOSITORY'] == 'alambertt/relampo_testing-distribute',
+                  'This proof is restricted to the owned execution repository.')
+          require(os.environ['GITHUB_REF'].startswith('refs/heads/RLP-562-capability-proof-'),
+                  'This proof requires a task-owned capability ref.')
+          require(os.environ['GITHUB_RUN_ATTEMPT'] == '1', 'Use a fresh proof run.')
+          require(re.fullmatch(r'[A-Za-z0-9-]{1,64}', os.environ['PROOF_ID']), 'Invalid proof ID.')
+          for key in ('PROOF_ARCHIVE_SHA256', 'PROOF_BINARY_SHA256'):
+              require(re.fullmatch(r'[a-f0-9]{64}', os.environ[key]), 'Invalid expected SHA256.')
+
+          def digest(path):
+              with path.open('rb') as source:
+                  return hashlib.file_digest(source, 'sha256').hexdigest()
+
+          payload = pathlib.Path('.relampo/capability-proof')
+          archive = payload / 'relampo-worker.tar.gz'
+          checksum = payload / 'relampo-worker.tar.gz.sha256'
+          expected_archive = os.environ['PROOF_ARCHIVE_SHA256']
+          require(archive.is_file() and checksum.is_file(), 'Missing worker payload/checksum.')
+          require(checksum.read_text().split() == [expected_archive, 'relampo-worker.tar.gz'],
+                  'Payload checksum disagrees with dispatch input.')
+          require(digest(archive) == expected_archive, 'Compressed worker digest mismatch.')
+
+          scratch = pathlib.Path(os.environ['RUNNER_TEMP']) / 'relampo-capability-proof'
+          scratch.mkdir(exist_ok=False)
+          binary = scratch / 'relampo-worker'
+          with tarfile.open(archive, 'r:gz') as packed:
+              members = packed.getmembers()
+              require(len(members) == 1 and members[0].name == 'relampo-worker' and members[0].isfile(),
+                      'Worker archive must contain one regular relampo-worker file.')
+              with packed.extractfile(members[0]) as source, binary.open('xb') as target:
+                  shutil.copyfileobj(source, target)
+          actual_binary = digest(binary)
+          require(actual_binary == os.environ['PROOF_BINARY_SHA256'], 'Final worker digest mismatch.')
+          binary.chmod(0o700)
+
+          # The only worker command in this workflow. No YAML, target, or grant is passed.
+          clean_env = {key: value for key, value in os.environ.items()
+                       if key in ('PATH', 'LANG', 'TMPDIR')}
+          result = subprocess.run([str(binary), '--capabilities'], cwd=scratch, env=clean_env,
+                                  capture_output=True, timeout=15, check=False)
+          require(result.returncode == 0, 'Worker capabilities command failed.')
+          require(len(result.stdout) <= 65536, 'Worker capability response is too large.')
+          try:
+              capabilities = json.loads(result.stdout)
+          except (ValueError, UnicodeDecodeError):
+              raise SystemExit('Worker capability response is not JSON.')
+          require(isinstance(capabilities, dict), 'Worker capabilities must be an object.')
+          require(type(capabilities.get('schema_version')) is int and capabilities['schema_version'] == 1,
+                  'Unsupported worker capability schema.')
+          require(type(capabilities.get('execution_manifest_version')) is int
+                  and capabilities['execution_manifest_version'] == 1, 'Unsupported execution manifest.')
+          for feature in ('multi_scenario_parallel', 'multi_scenario_phase',
+                          'multi_scenario_authorization', 'multi_scenario_resolved_load_contract'):
+              require(capabilities.get(feature) is True, 'Final worker lacks required multi capability: ' + feature)
+
+          receipt = {'schema_version': 1, 'os': 'linux', 'arch': 'amd64',
+                     'binary_sha256': actual_binary, 'capabilities': capabilities}
+          evidence = {'proof_id': os.environ['PROOF_ID'], 'repository': os.environ['GITHUB_REPOSITORY'],
+                      'source_sha': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],
+                      'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'archive_sha256': expected_archive}
+          output = pathlib.Path('capability-proof-output')
+          output.mkdir(exist_ok=False)
+          (output / 'relampo-worker.capabilities.json').write_text(json.dumps(receipt, sort_keys=True) + '\n')
+          (output / 'proof-context.json').write_text(json.dumps(evidence, sort_keys=True) + '\n')
+          (output / 'relampo-worker.sha256').write_text(actual_binary + '  relampo-worker\n')
+          print('Exact Linux/amd64 worker capability receipt created. No load was executed.')
+          PY
+
+      - name: Upload the exact binary capability receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: relampo-worker-capability-proof-${{ inputs.proof_id }}
+          path: capability-proof-output/
+          if-no-files-found: error
+          retention-days: 7
