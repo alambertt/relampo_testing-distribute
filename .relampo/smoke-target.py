@@ -2,7 +2,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json, pathlib, threading, time
 
 lock = threading.Lock()
-log = pathlib.Path('results/target-requests.jsonl')
+log = pathlib.Path('results/target-requests.txt')
 log.parent.mkdir(parents=True, exist_ok=True)
 log.touch()
 
