@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "proof_id": "RLP781v2-d59cc2db-8ed4-4153-ada4-eef3061d6b0d",
+  "producer_frozen": true,
+  "public_file_review_complete": true,
+  "expected_worker_version": "0.0.0-next",
+  "backend_source_sha": "5645e894500e4a36b302ec2762485d1734437206",
+  "worker_source_sha": "b9fbb189ee31e177e25f6c6c4fe98b4786c7cd3a",
+  "worker_build_command": [
+    "go",
+    "build",
+    "-trimpath",
+    "-buildvcs=false",
+    "-tags",
+    "dist",
+    "-ldflags",
+    "-s -w -X main.version=0.0.0-next",
+    "-o",
+    "/Users/angel/Documents/Codex/relampo-multi-scenario-implementation/rlp781-native-proof/input/relampo-worker",
+    "./cmd/relampo-worker"
+  ],
+  "worker_binary_sha256": "490fd414e5477f9a279a287b0b5d4e095ab14ceb58a6e376051b9bdcc93990a1",
+  "worker_archive_sha256": "af1784fcd7d9645c7edb3bd5fd07290d79525eb3bd3921aaa546aca213e5cd26",
+  "stable_fixture_path": ".goreleaser-rlp781-proof.json",
+  "files": [
+    {
+      "path": ".goreleaser.yaml",
+      "sha256": "c2ecef0bf2b3905a2aed05628cedfcf4f89790a924efebcfd42314d053023744",
+      "mode": "0o644"
+    },
+    {
+      "path": "scripts/build-channel.sh",
+      "sha256": "71d4dcbc3ebb6fe9a969d5db3b7e184d4c6bd7d8bd7cd5785171a4c088d889f6",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/publish-develop-release.sh",
+      "sha256": "a04a22ba685c29f4641b5c3750308074de2db2096d7b6e0e6ef63db0b73586cf",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/write-worker-capabilities.py",
+      "sha256": "b23e683793f6d334919adf77c5425772fb57dddee98ebb822056346515bad946",
+      "mode": "0o644"
+    },
+    {
+      "path": "install.sh",
+      "sha256": "f738904fa9b770ab2c948336035992f1f43b4ed230c0875369eaae8f7063008c",
+      "mode": "0o644"
+    },
+    {
+      "path": "scripts/install-relampo.ps1",
+      "sha256": "7d6453ee836fac994fa7fd9b6f50431c07216cc2bc0cde4162357efe1794d90f",
+      "mode": "0o644"
+    },
+    {
+      "path": ".goreleaser-rlp781-proof.json",
+      "sha256": "501ff70e5da3144261c02608de344fecfc3e73b23950387e920ad2ada0d21242",
+      "mode": "0o644"
+    },
+    {
+      "path": "fixture-diff.json",
+      "sha256": "9c80814cd25eb73b158ebcf7242c18f8101cf82c66529b2de98e2a6c7e89f1e0",
+      "mode": "0o644"
+    }
+  ],
+  "worker_build_environment": {
+    "CGO_ENABLED": "0",
+    "GOOS": "linux",
+    "GOARCH": "amd64"
+  }
+}

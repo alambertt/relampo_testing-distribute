@@ -1,0 +1,89 @@
+{
+  "version": 2,
+  "project_name": "relampo-backend",
+  "builds": [
+    {
+      "id": "relampo-worker",
+      "main": "./cmd/relampo-worker",
+      "binary": "relampo-worker",
+      "env": [
+        "CGO_ENABLED=0"
+      ],
+      "flags": [
+        "-trimpath",
+        "-buildvcs=false"
+      ],
+      "goos": [
+        "linux"
+      ],
+      "goarch": [
+        "amd64"
+      ],
+      "tags": [
+        "dist"
+      ],
+      "ldflags": [
+        "-s -w -X main.version={{.Version}}"
+      ],
+      "hooks": {
+        "post": [
+          {
+            "cmd": "python3 scripts/write-worker-capabilities.py \"{{ .Path }}\" \"{{ .Os }}\" \"{{ .Arch }}\" dist/relampo-worker_{{ .Os }}_{{ .Arch }}.capabilities.json \"{{ .Version }}\""
+          }
+        ]
+      },
+      "no_main_check": true,
+      "tool": "{{ .Env.RLP781_COPY_TOOL }}"
+    }
+  ],
+  "archives": [
+    {
+      "id": "relampo-worker",
+      "ids": [
+        "relampo-worker"
+      ],
+      "name_template": "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}",
+      "format_overrides": [
+        {
+          "goos": "windows",
+          "formats": [
+            "zip"
+          ]
+        }
+      ]
+    }
+  ],
+  "checksum": {
+    "name_template": "checksums.txt",
+    "extra_files": [
+      {
+        "glob": "dist/relampo-worker_linux_amd64.capabilities.json"
+      }
+    ]
+  },
+  "snapshot": {
+    "version_template": "{{ .Version }}-next"
+  },
+  "changelog": {
+    "disable": true
+  },
+  "blobs": [
+    {
+      "provider": "s3",
+      "region": "us-east-2",
+      "bucket": "relampo-downloads-616250100969-20260201142308",
+      "directory": "relampo/v{{ .Version }}",
+      "ids": [
+        "relampo-worker"
+      ],
+      "extra_files": [
+        {
+          "glob": "dist/checksums.txt"
+        },
+        {
+          "glob": "dist/relampo-worker_linux_amd64.capabilities.json"
+        }
+      ]
+    }
+  ]
+}
