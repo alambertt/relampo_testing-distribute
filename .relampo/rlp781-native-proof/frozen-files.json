@@ -1,0 +1,46 @@
+{
+  "packaging_source_sha": "b9fbb189ee31e177e25f6c6c4fe98b4786c7cd3a",
+  "root_public_file_review_required": true,
+  "files": [
+    {
+      "path": ".goreleaser.yaml",
+      "sha256": "6c09b99a05791440ef5cb83df563cee75a18c5217cd1b78c3288b659eb063e98",
+      "mode": "0o644"
+    },
+    {
+      "path": "scripts/build-channel.sh",
+      "sha256": "71d4dcbc3ebb6fe9a969d5db3b7e184d4c6bd7d8bd7cd5785171a4c088d889f6",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/publish-develop-release.sh",
+      "sha256": "a04a22ba685c29f4641b5c3750308074de2db2096d7b6e0e6ef63db0b73586cf",
+      "mode": "0o755"
+    },
+    {
+      "path": "scripts/write-worker-capabilities.py",
+      "sha256": "b23e683793f6d334919adf77c5425772fb57dddee98ebb822056346515bad946",
+      "mode": "0o644"
+    },
+    {
+      "path": "install.sh",
+      "sha256": "f738904fa9b770ab2c948336035992f1f43b4ed230c0875369eaae8f7063008c",
+      "mode": "0o644"
+    },
+    {
+      "path": "scripts/install-relampo.ps1",
+      "sha256": "7d6453ee836fac994fa7fd9b6f50431c07216cc2bc0cde4162357efe1794d90f",
+      "mode": "0o644"
+    },
+    {
+      "path": ".goreleaser-rlp781-proof.json",
+      "sha256": "148751ead853b7fbcbffe974095f891dff68630779a1790047d2096fee92f427",
+      "mode": "0o644"
+    },
+    {
+      "path": "fixture-diff.json",
+      "sha256": "8253f8251950a3f49961e0dd12119ad0c6cfb819fbbd817799bacf2116c78911",
+      "mode": "0o644"
+    }
+  ]
+}
