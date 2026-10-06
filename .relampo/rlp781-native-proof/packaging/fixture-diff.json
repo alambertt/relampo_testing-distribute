@@ -1,0 +1,33 @@
+{
+  "packaging_source_sha": "5655fde237aed15f5adeeb8139d55ec6d892e07d",
+  "worker_source_sha": "5655fde237aed15f5adeeb8139d55ec6d892e07d",
+  "removed_top_level": [
+    "before",
+    "homebrew_casks"
+  ],
+  "builds": "worker only",
+  "archives": "worker only",
+  "worker_changes": {
+    "goos": [
+      "linux"
+    ],
+    "goarch": [
+      "amd64"
+    ],
+    "no_main_check": true,
+    "tool": "{{ .Env.RLP781_COPY_TOOL }}"
+  },
+  "changelog": {
+    "disable": true
+  },
+  "blob_changes": "IDs narrowed to relampo-worker; other fields unchanged",
+  "preserved_exact": [
+    "actual corrected worker post hook",
+    "worker flags",
+    "worker tags",
+    "worker ldflags",
+    "snapshot version template",
+    "checksum selection",
+    "blob directory and extra_files"
+  ]
+}

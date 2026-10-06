@@ -1,0 +1,123 @@
+version: 2
+project_name: relampo-backend
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: relampo
+    main: ./cmd/relampo
+    binary: relampo
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # embedui bundles the relampo-yml-editor build for `relampo studio`. The
+    # release workflow runs scripts/fetch-editor-dist.sh (after assuming the AWS
+    # role) to populate internal/studio/assets/dist before goreleaser builds, so
+    # the //go:embed all:dist directive resolves. Only the CLI carries the UI.
+    tags:
+      - dist
+      - embedui
+    ldflags:
+      - >-
+        -s -w
+        -X main.version={{.Version}}
+        -X main.studioStatsigClientKey={{.Env.STUDIO_STATSIG_CLIENT_KEY}}
+        -X main.studioCatalogPublicKey={{.Env.STUDIO_CATALOG_PUBLIC_KEY}}
+        -X main.studioCatalogKeyID={{.Env.STUDIO_CATALOG_KEY_ID}}
+        -X main.embeddedEditorVersion={{.Env.EMBEDDED_EDITOR_VERSION}}
+        -X main.studioReleaseChannel=stable
+
+  - id: relampo-worker
+    main: ./cmd/relampo-worker
+    binary: relampo-worker
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    tags:
+      - dist
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    hooks:
+      post:
+        - cmd: python3 scripts/write-worker-capabilities.py "{{ .Path }}" "{{ .Os }}" "{{ .Arch }}" dist/relampo-worker_{{ .Os }}_{{ .Arch }}.capabilities.json "{{ .Version }}"
+
+archives:
+  - id: relampo
+    ids: [relampo]
+    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+
+  - id: relampo-worker
+    ids: [relampo-worker]
+    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+
+checksum:
+  name_template: checksums.txt
+  extra_files:
+    - glob: dist/relampo-worker_linux_amd64.capabilities.json
+
+blobs:
+  - provider: s3
+    region: us-east-2
+    bucket: relampo-downloads-616250100969-20260201142308
+    directory: "relampo/v{{ .Version }}"
+    ids:
+      - relampo
+      - relampo-worker
+    extra_files:
+      - glob: dist/checksums.txt
+      - glob: dist/relampo-worker_linux_amd64.capabilities.json
+
+snapshot:
+  version_template: "{{ .Version }}-next"
+
+changelog:
+  use: github
+
+homebrew_casks:
+  - name: relampo
+    ids:
+      - relampo
+    binaries:
+      - relampo
+    homepage: "https://docs.relampo.dev"
+    description: "Relampo CLI enables recording traffic, scripting load tests, and generating load"
+    url:
+      template: "https://dl.relampo.com/relampo/v{{ .Version }}/{{ .ArtifactName }}"
+      verified: "dl.relampo.com/"
+    repository:
+      owner: relampo
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/relampo"]
+          end
