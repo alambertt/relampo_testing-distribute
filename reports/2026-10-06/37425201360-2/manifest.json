@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "execution": {
+    "worker_proof": {
+      "binary_sha256": "bd80313069a0cdddbca67d3b1d21a22f2dde4c4220fdf75c195b09684668f871",
+      "receipt": {
+        "schema_version": 1,
+        "os": "linux",
+        "arch": "amd64",
+        "binary_sha256": "bd80313069a0cdddbca67d3b1d21a22f2dde4c4220fdf75c195b09684668f871",
+        "capabilities": {
+          "schema_version": 1,
+          "version": "dev",
+          "multi_scenario_parallel": true,
+          "multi_scenario_phase": true,
+          "multi_scenario_authorization": true,
+          "multi_scenario_resolved_load_contract": true,
+          "execution_manifest_version": 1
+        }
+      }
+    },
+    "expected_execution": {
+      "execution_id": "relampo-ubx5i3a7x6xj7k6fr7xzythvm5",
+      "script_sha256": "f4a6faf299fcfbf13b0ee197a6058bc83d56bef5f6f55a92789171342db95e5e",
+      "provider": "github",
+      "provider_run_id": "",
+      "provider_manifest_digest": "",
+      "scenario_mode": "sequential",
+      "total_nodes": 2,
+      "scenarios": [
+        {
+          "scenario_name": "A",
+          "load_contract": {
+            "scenario_name": "A",
+            "load": {
+              "duration": "3s",
+              "iterations": 1,
+              "users": 3
+            },
+            "peak_vus": 3,
+            "duration": 3000000000
+          }
+        },
+        {
+          "scenario_name": "B",
+          "load_contract": {
+            "scenario_name": "B",
+            "load": {
+              "duration": "3s",
+              "iterations": 1,
+              "users": 2
+            },
+            "peak_vus": 2,
+            "duration": 3000000000
+          }
+        }
+      ],
+      "jobs": [
+        {
+          "node_id": 1,
+          "selected_scenario": "A",
+          "provider_attempt": "1",
+          "provider_job_id": "scenario-1-node-1"
+        },
+        {
+          "node_id": 2,
+          "selected_scenario": "A",
+          "provider_attempt": "1",
+          "provider_job_id": "scenario-1-node-2"
+        },
+        {
+          "node_id": 1,
+          "selected_scenario": "B",
+          "provider_attempt": "1",
+          "provider_job_id": "scenario-2-node-1"
+        },
+        {
+          "node_id": 2,
+          "selected_scenario": "B",
+          "provider_attempt": "1",
+          "provider_job_id": "scenario-2-node-2"
+        }
+      ]
+    },
+    "repository": "alambertt/relampo_testing-distribute",
+    "run_id": 37425201360,
+    "attempt": 2,
+    "nodes": 2,
+    "vus": 3,
+    "scenario": "scenarios/sequential.yaml",
+    "scenario_sha256": "f4a6faf299fcfbf13b0ee197a6058bc83d56bef5f6f55a92789171342db95e5e",
+    "source_sha": "945e3a4dff302edea9cb59e2df867c9355dce938",
+    "version": "dev",
+    "language": "en",
+    "timezone": "America/New_York",
+    "duration": "",
+    "formats": {
+      "html": "rlp779.html",
+      "json": "rlp779.json"
+    },
+    "license": {
+      "license_authorized_duration": "1h0m0s",
+      "license_authorized_nodes": "4",
+      "license_authorized_vus": "500",
+      "license_tier": "free"
+    }
+  },
+  "generation": "failed",
+  "publication": "completed",
+  "diagnostic": "multi-scenario native rerun cannot complete the original execution",
+  "reports": null,
+  "release": "https://github.com/alambertt/relampo_testing-distribute/releases/tag/relampo-report-37425201360-2",
+  "index": "https://github.com/alambertt/relampo_testing-distribute/tree/main/reports/2026-10-06/37425201360-2"
+}
