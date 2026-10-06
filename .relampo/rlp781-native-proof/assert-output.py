@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tarfile
 
@@ -30,18 +31,41 @@ assert capabilities["schema_version"] == capabilities["execution_manifest_versio
 for flag in ("multi_scenario_parallel", "multi_scenario_phase", "multi_scenario_authorization", "multi_scenario_resolved_load_contract"):
     assert capabilities[flag] is True, flag
 
-def verify_stage(stage):
+def verify_stage(stage, allow_develop_self_entry=False):
     receipt_name = "relampo-worker_linux_amd64.capabilities.json"
     receipt_path = stage / receipt_name
     receipt = json.loads(receipt_path.read_text())
     assert (receipt['schema_version'], receipt['os'], receipt['arch']) == (1, 'linux', 'amd64')
     assert receipt['binary_sha256'] == expected and receipt['capabilities'] == capabilities
     entries = {}
+    validated = []
+    self_entry = None
     for line in (stage / 'checksums.txt').read_text().splitlines():
         checksum, name = line.split(maxsplit=1)
-        name = name.lstrip('*')
+        name = name.removeprefix('*')
+        assert re.fullmatch(r'[a-f0-9]{64}', checksum), 'Invalid checksum digest'
+        relative = pathlib.PurePosixPath(name)
+        assert not relative.is_absolute() and '..' not in relative.parts
+        assert relative.as_posix() == name, 'Noncanonical checksum path'
         assert name not in entries
         entries[name] = checksum
+        path = stage / relative
+        path.resolve().relative_to(stage.resolve())
+        assert path.is_file() and not path.is_symlink(), 'Invalid checksum payload path'
+        if allow_develop_self_entry and name == 'checksums.txt':
+            assert checksum == hashlib.sha256(b'').hexdigest(), 'Unexpected baseline self-entry digest'
+            self_entry = {'path': name, 'recorded_sha256': checksum,
+                          'actual_file_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                          'status': 'PREEXISTING_SELF_ENTRY_RETAINED_NOT_VALIDATED'}
+        else:
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == checksum, name
+            validated.append(name)
+    if allow_develop_self_entry:
+        assert self_entry is not None, 'Missing expected baseline self-entry'
+        detail = {'validated_payloads': validated, 'excluded_sole_self_entry': self_entry,
+                  'raw_inventory_sha256': hashlib.sha256((stage / 'checksums.txt').read_bytes()).hexdigest()}
+        (output / 'develop-checksum-validation.json').write_text(json.dumps(detail, indent=2) + '\n')
+        print('Develop checksums: every listed payload verified; sole baseline checksums.txt self-entry retained and not validated.')
     assert entries[receipt_name] == hashlib.sha256(receipt_path.read_bytes()).hexdigest()
     archive_name = 'relampo-worker_0.0.0-next_linux_amd64.tar.gz'
     archive = stage / archive_name
@@ -54,7 +78,7 @@ def verify_stage(stage):
             'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}
 
 stable = verify_stage(packaging / 'dist')
-develop = verify_stage(output / 'develop-staging')
+develop = verify_stage(output / 'develop-staging', allow_develop_self_entry=True)
 uploads = [json.loads(line) for line in (output / 'uploads.jsonl').read_text().splitlines()]
 assert uploads[-1][3].endswith('/relampo/latest.txt')
 for name in ('relampo-worker_linux_amd64.capabilities.json', 'checksums.txt', 'relampo-worker_0.0.0-next_linux_amd64.tar.gz'):

@@ -46,7 +46,8 @@ goreleaser check "$fixture"
 timeout 300s goreleaser release --snapshot --skip=before,sign --clean --parallelism=1 --timeout=4m --config "$fixture" 2>&1 | tee "$RLP781_PAYLOAD_ROOT/proof-output/stable.log"
 (cd dist && sha256sum -c checksums.txt)
 timeout 120s ./scripts/publish-develop-release.sh 2>&1 | tee "$RLP781_PAYLOAD_ROOT/proof-output/develop.log"
-(cd "$RELAMPO_DEV_STAGING_DIR" && sha256sum -c checksums.txt)
+# The unchanged develop loop includes its own empty checksums.txt hash.
+# assert-output.py retains that sole entry and verifies every other payload.
 cd "$RLP781_PAYLOAD_ROOT"
 timeout 90s python3 run-negatives.py
 python3 assert-output.py

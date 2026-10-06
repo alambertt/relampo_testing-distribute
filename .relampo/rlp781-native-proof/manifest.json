@@ -68,5 +68,14 @@
     "CGO_ENABLED": "0",
     "GOOS": "linux",
     "GOARCH": "amd64"
-  }
+  },
+  "known_baseline_limitations": [
+    {
+      "name": "develop_checksum_inventory_self_entry",
+      "baseline_source_sha": "f616d3f0085d2a45c2e29830cc8b9a50ab9c4923",
+      "packaging_source_sha": "5645e894500e4a36b302ec2762485d1734437206",
+      "handling": "Preserve the raw unchanged checksums.txt and its sole self-entry. Verify every other listed payload digest/path with no duplicates. Record the self-entry as retained and not validated.",
+      "scope": "Existing develop checksum loop only; stable inventory and required archive/receipt hashes remain fully verified."
+    }
+  ]
 }
